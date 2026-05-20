@@ -10,11 +10,26 @@ View your app in AI Studio: https://ai.studio/apps/3b82aed9-6e8b-4078-a43c-33eb2
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Create a `.env.local` file and configure your Firebase values:
+   - `VITE_FIREBASE_API_KEY`
+   - `VITE_FIREBASE_AUTH_DOMAIN`
+   - `VITE_FIREBASE_PROJECT_ID`
+   - `VITE_FIREBASE_STORAGE_BUCKET`
+   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
+   - `VITE_FIREBASE_APP_ID`
+3. In the Firebase console, enable Firestore for your project. The app uses Firestore collections named `tasks` and `members`.
+4. Run the app locally:
    `npm run dev`
+
+## Vercel environment variables
+For Vercel deploy, add the same `VITE_` Firebase keys to the project environment settings.
+
+If you want Slack login / notification integration, also add:
+- `VITE_SLACK_CLIENT_ID`
+- `VITE_SLACK_REDIRECT_URI`
+
+> Note: Slack OAuth requires a backend route to securely exchange the OAuth code for an access token and then send notifications to Slack.

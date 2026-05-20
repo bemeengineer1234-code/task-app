@@ -36,6 +36,8 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMont
 import { ja } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { db } from './lib/firebase';
+import { collection, query, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -103,97 +105,126 @@ interface ChatThread {
 
 // --- Mock Data ---
 
-const MOCK_CURRENT_USER: UserProfile = {
-  id: 'user_1',
-  displayName: 'Kento Sato',
-  slackUid: 'U12345678',
-  backgroundImageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=1000',
-  currentStreak: 12,
-  badges: ['Time Master', 'Streak King'],
-  fightCount: 24
+const DEFAULT_USER_PROFILE: UserProfile = {
+  id: '',
+  displayName: 'ゲスト',
+  slackUid: '',
+  backgroundImageUrl: '',
+  currentStreak: 0,
+  badges: [],
+  fightCount: 0
 };
 
-const MOCK_MEMBERS: UserProfile[] = [
-  MOCK_CURRENT_USER,
-  { id: 'user_2', displayName: 'Yumi Tanaka', slackUid: 'U222', backgroundImageUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=1000', avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=1000', currentStreak: 5, badges: ['Early Bird'], fightCount: 15 },
-  { id: 'user_3', displayName: 'Hiroshi Ito', slackUid: 'U333', backgroundImageUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=1000', avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=1000', currentStreak: 8, badges: ['Focus God'], fightCount: 42 },
-];
+const INITIAL_TASKS: Task[] = [];
 
-const INITIAL_TASKS: Task[] = [
-  {
-    id: 't1',
-    userId: 'user_1',
-    assignedBy: 'user_1',
-    parentId: null,
-    title: 'UI Design Review',
-    description: 'Review the new dashboard components with the team.',
-    priority: 'high',
-    category: 'Design',
-    estimatedMinutes: 45,
-    actualMinutes: 0,
-    status: 'todo',
-    mismatchReason: '',
-    attachments: [],
-    dueDate: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: 't2',
-    userId: 'user_1',
-    assignedBy: 'user_1',
-    parentId: null,
-    title: 'Database Schema Cleanup',
-    description: 'Optimize Firestore indexes and structure.',
-    priority: 'medium',
-    category: 'Engineering',
-    estimatedMinutes: 60,
-    actualMinutes: 0,
-    status: 'doing',
-    mismatchReason: '',
-    attachments: [],
-    dueDate: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: 't3',
-    userId: 'user_2',
-    assignedBy: 'user_2',
-    parentId: null,
-    title: 'Marketing Strategy 2024',
-    description: 'Plan the upcoming campaign for Q3.',
-    priority: 'high',
-    category: 'Marketing',
-    estimatedMinutes: 120,
-    actualMinutes: 0,
-    status: 'todo',
-    mismatchReason: '',
-    attachments: [],
-    dueDate: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: 't4',
-    userId: 'user_3',
-    assignedBy: 'user_3',
-    parentId: null,
-    title: 'User Interview Analysis',
-    description: 'Summarize insights from the last 5 interviews.',
-    priority: 'medium',
-    category: 'Research',
-    estimatedMinutes: 90,
-    actualMinutes: 0,
-    status: 'todo',
-    mismatchReason: '',
-    attachments: [],
-    dueDate: new Date(),
-    updatedAt: new Date()
+const TASKS_COLLECTION = 'tasks';
+const MEMBERS_COLLECTION = 'members';
+const IS_FIRESTORE_CONFIGURED = Boolean(
+  import.meta.env.VITE_FIREBASE_API_KEY &&
+  import.meta.env.VITE_FIREBASE_AUTH_DOMAIN &&
+  import.meta.env.VITE_FIREBASE_PROJECT_ID &&
+  import.meta.env.VITE_FIREBASE_STORAGE_BUCKET &&
+  import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID &&
+  import.meta.env.VITE_FIREBASE_APP_ID
+);
+
+function normalizeFirestoreDate(value: any): Date {
+  if (!value) return new Date();
+  if (typeof value.toDate === 'function') return value.toDate();
+  return new Date(value);
+}
+
+function deserializeTask(entry: any, id?: string): Task {
+  return {
+    id: id || entry.id || '',
+    userId: entry.userId || '',
+    assignedBy: entry.assignedBy || '',
+    parentId: entry.parentId ?? null,
+    title: entry.title || '',
+    description: entry.description || '',
+    priority: entry.priority || 'medium',
+    category: entry.category || '作業',
+    estimatedMinutes: entry.estimatedMinutes || 30,
+    actualMinutes: entry.actualMinutes || 0,
+    status: entry.status || 'todo',
+    mismatchReason: entry.mismatchReason || '',
+    attachments: entry.attachments || [],
+    startPhoto: entry.startPhoto,
+    dueDate: normalizeFirestoreDate(entry.dueDate),
+    updatedAt: normalizeFirestoreDate(entry.updatedAt)
+  };
+}
+
+function deserializeMember(entry: any, id?: string): UserProfile {
+  return {
+    id: id || entry.id || '',
+    displayName: entry.displayName || entry.email?.split('@')[0] || '',
+    avatarUrl: entry.avatarUrl || '',
+    slackUid: entry.slackUid || entry.email?.split('@')[0] || '',
+    backgroundImageUrl: entry.backgroundImageUrl || '',
+    currentStreak: entry.currentStreak || 0,
+    badges: entry.badges || [],
+    fightCount: entry.fightCount || 0
+  };
+}
+
+async function saveTaskToFirestore(task: Task) {
+  if (!db) return;
+  try {
+    await setDoc(doc(db, TASKS_COLLECTION, task.id), {
+      ...task,
+      dueDate: task.dueDate,
+      updatedAt: task.updatedAt
+    });
+  } catch (error) {
+    console.error('Firestore save task failed:', error);
   }
-];
+}
 
-const MOCK_COLLEAGUES_PROGRESS = [
-  { userId: 'user_2', taskTitle: 'API Implementation', status: 'doing', progress: 65, startPhoto: 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?q=80&w=1000' },
-  { userId: 'user_3', taskTitle: 'Client Meeting', status: 'doing', progress: 20, startPhoto: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?q=80&w=1000' },
-];
+async function updateTaskInFirestore(taskId: string, data: Partial<Task>) {
+  if (!db) return;
+  try {
+    await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
+      ...data
+    } as any);
+  } catch (error) {
+    console.error('Firestore update task failed:', error);
+  }
+}
+
+async function deleteTaskFromFirestore(taskId: string) {
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, TASKS_COLLECTION, taskId));
+  } catch (error) {
+    console.error('Firestore delete task failed:', error);
+  }
+}
+
+async function saveMemberToFirestore(member: UserProfile) {
+  if (!db) return;
+  try {
+    await setDoc(doc(db, MEMBERS_COLLECTION, member.id), {
+      ...member
+    });
+  } catch (error) {
+    console.error('Firestore save member failed:', error);
+  }
+}
+
+function createUserProfile(email: string, avatarUrl?: string): UserProfile {
+  const displayName = email.split('@')[0];
+  return {
+    id: email,
+    displayName,
+    slackUid: displayName,
+    backgroundImageUrl: avatarUrl || '',
+    avatarUrl,
+    currentStreak: 0,
+    badges: [],
+    fightCount: 0
+  };
+}
 
 // --- Components ---
 
@@ -202,10 +233,17 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'calendar' | 'messages' | 'members' | 'settings'>('dashboard');
   const [showCompleted, setShowCompleted] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [userProfile, setUserProfile] = useState<UserProfile>(MOCK_CURRENT_USER);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    if (typeof window === 'undefined') return INITIAL_TASKS;
+    return [];
+  });
+  const [members, setMembers] = useState<UserProfile[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return [];
+  });
+  const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [isLocked, setIsLocked] = useState(false);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>('t2'); // Mocking one in progress
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>('default');
   const [timerSeconds, setTimerSeconds] = useState(2700); // 45 mins
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -243,43 +281,100 @@ export default function App() {
   }, [isLocked, timerSeconds, activeTaskId, tasks]);
 
   const allSearchableTasks = useMemo(() => {
-    // Combine current user's tasks and mock tasks from other members for search
-    const memberTasks: Task[] = MOCK_COLLEAGUES_PROGRESS.map((p, i) => ({
-      id: `mt-${i}`,
-      userId: p.userId,
-      assignedBy: p.userId,
-      parentId: null,
-      title: p.taskTitle,
-      description: 'メンバーのタスク詳細',
-      priority: 'medium',
-      category: '共有',
-      estimatedMinutes: 60,
-      actualMinutes: 0,
-      status: p.status as TaskStatus,
-      mismatchReason: '',
-      attachments: [],
-      startPhoto: p.startPhoto,
-      dueDate: new Date(),
-      updatedAt: new Date()
-    }));
-    return [...tasks, ...memberTasks];
+    return tasks;
   }, [tasks]);
+
+  const memberProgress = useMemo(() => {
+    return members.map(member => {
+      const activeTask = tasks.find(t => t.userId === member.id && t.status === 'doing');
+      const pendingTasks = tasks.filter(t => t.userId === member.id && t.status !== 'done');
+      return {
+        userId: member.id,
+        member,
+        taskTitle: activeTask ? activeTask.title : pendingTasks[0]?.title || 'タスクがありません',
+        status: activeTask ? 'doing' : pendingTasks.length ? 'waiting' : 'none',
+        progress: activeTask ? 60 + Math.min(40, pendingTasks.length * 10) : pendingTasks.length ? 30 : 0,
+        startPhoto: activeTask?.startPhoto
+      };
+    });
+  }, [members, tasks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !IS_FIRESTORE_CONFIGURED || !db) return;
+    const tasksQuery = query(collection(db, TASKS_COLLECTION));
+    const unsubscribe = onSnapshot(tasksQuery, snapshot => {
+      const loadedTasks = snapshot.docs.map(docSnapshot => deserializeTask({ ...docSnapshot.data(), id: docSnapshot.id }));
+      setTasks(loadedTasks);
+    }, (error) => {
+      console.error('Firestore tasks snapshot failed:', error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !IS_FIRESTORE_CONFIGURED || !db) return;
+    const membersQuery = query(collection(db, MEMBERS_COLLECTION));
+    const unsubscribe = onSnapshot(membersQuery, snapshot => {
+      const loadedMembers = snapshot.docs.map(docSnapshot => deserializeMember(docSnapshot.data(), docSnapshot.id));
+      setMembers(loadedMembers);
+    }, (error) => {
+      console.error('Firestore members snapshot failed:', error);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleToggleExpand = (id: string) => {
     setExpandedTaskId(prev => prev === id ? null : id);
   };
 
-  const handleLogin = (email?: string, avatarUrl?: string) => {
-    setIsLoggedIn(true);
-    if (email) {
-      console.log('Logged in with email:', email);
-      setUserProfile(prev => ({
-        ...prev,
-        id: email,
-        displayName: email.split('@')[0],
-        avatarUrl: avatarUrl || prev.avatarUrl
-      }));
+  const handleLogin = async (email?: string, avatarUrl?: string) => {
+    if (!email) return;
+    console.log('Logged in with email:', email);
+
+    if (IS_FIRESTORE_CONFIGURED && db) {
+      try {
+        const memberRef = doc(db, MEMBERS_COLLECTION, email);
+        const memberSnapshot = await getDoc(memberRef);
+        if (memberSnapshot.exists()) {
+          const existingMember = deserializeMember(memberSnapshot.data(), memberSnapshot.id);
+          setUserProfile(existingMember);
+          setMembers(prev => {
+            if (prev.some(member => member.id === existingMember.id)) return prev;
+            return [...prev, existingMember];
+          });
+          setIsLoggedIn(true);
+          return;
+        }
+
+        const newProfile = createUserProfile(email, avatarUrl);
+        setUserProfile(newProfile);
+        setMembers(prev => [...prev, newProfile]);
+        await saveMemberToFirestore(newProfile);
+        setIsLoggedIn(true);
+        return;
+      } catch (error) {
+        console.error('Firestore handleLogin error:', error);
+      }
     }
+
+    // Firestoreが使えない場合のローカルフォールバック
+    const storedUsers = JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
+    const saved = storedUsers[email];
+    if (saved) {
+      const existingMember = createUserProfile(email, saved.avatarUrl);
+      setUserProfile(existingMember);
+      setMembers(prev => {
+        if (prev.some(member => member.id === existingMember.id)) return prev;
+        return [...prev, existingMember];
+      });
+      setIsLoggedIn(true);
+      return;
+    }
+
+    const newProfile = createUserProfile(email, avatarUrl);
+    setUserProfile(newProfile);
+    setMembers(prev => [...prev, newProfile]);
+    setIsLoggedIn(true);
   };
   const handleLogout = () => setIsLoggedIn(false);
 
@@ -300,31 +395,35 @@ export default function App() {
     setShowPhotoModal(true);
   };
 
-  const finalizeStartTask = (taskId: string, photoUrl?: string) => {
+  const finalizeStartTask = async (taskId: string, photoUrl?: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
-    
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'doing', startPhoto: photoUrl } : t));
+    const updatedTask = { ...task, status: 'doing', startPhoto: photoUrl, updatedAt: new Date() };
+    setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
+    await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: new Date() });
     setActiveTaskId(taskId);
     setIsLocked(true);
-    const selectedTask = tasks.find(t => t.id === taskId);
-    if (selectedTask) setTimerSeconds(selectedTask.estimatedMinutes * 60);
+    setTimerSeconds(task.estimatedMinutes * 60);
     setShowPhotoModal(false);
     setPendingStartTaskId(null);
-    if (selectedTask) addNotification('start', selectedTask.title);
+    addNotification('start', task.title);
   };
 
   const [expansionSignals, setExpansionSignals] = useState<Record<string, number>>({});
 
-  const pauseTask = (taskId: string, status: TaskStatus) => {
+  const pauseTask = async (taskId: string, status: TaskStatus) => {
     const task = tasks.find(t => t.id === taskId);
+    const updatedTask = task ? { ...task, status, updatedAt: new Date() } : undefined;
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t));
+    if (updatedTask) await updateTaskInFirestore(taskId, { status, updatedAt: new Date() });
     setShowRescueModal(false);
     if (task) addNotification('paused', task.title);
   };
 
-  const resumeTask = (taskId: string) => {
+  const resumeTask = async (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'doing' } : t));
+    if (task) await updateTaskInFirestore(taskId, { status: 'doing', updatedAt: new Date() });
   };
 
   const completeTask = (taskId: string) => {
@@ -343,8 +442,10 @@ export default function App() {
     }
   };
 
-  const finalizeTask = (taskId: string, actual: number, reason: string = '') => {
+  const finalizeTask = async (taskId: string, actual: number, reason: string = '') => {
+    const task = tasks.find(t => t.id === taskId);
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done', actualMinutes: actual, mismatchReason: reason } : t));
+    await updateTaskInFirestore(taskId, { status: 'done', actualMinutes: actual, mismatchReason: reason, updatedAt: new Date() });
     setIsLocked(false);
     setActiveTaskId(null);
     setShowGapModal(false);
@@ -362,7 +463,7 @@ export default function App() {
     }, 1500);
   };
 
-  const handleDeleteTask = (taskId: string) => {
+  const handleDeleteTask = async (taskId: string) => {
     if (confirm('このタスクを削除してもよろしいですか？（サブタスクもすべて削除されます）')) {
       const getDescendantIds = (id: string, all: Task[]): string[] => {
         const children = all.filter(t => t.parentId === id);
@@ -375,15 +476,18 @@ export default function App() {
 
       const idsToDelete = [taskId, ...getDescendantIds(taskId, tasks)];
       setTasks(prev => prev.filter(t => !idsToDelete.includes(t.id)));
+      await Promise.all(idsToDelete.map(id => deleteTaskFromFirestore(id)));
       setShowTaskForm(false);
       setEditingTask(null);
       setTargetParentId(null);
     }
   };
 
-  const handleTaskSubmit = (taskData: Partial<Task>) => {
+  const handleTaskSubmit = async (taskData: Partial<Task>) => {
     if (editingTask) {
-      setTasks(prev => prev.map(t => t.id === editingTask.id ? { ...t, ...taskData, updatedAt: new Date() } : t));
+      const updatedTask = { ...editingTask, ...taskData, updatedAt: new Date() };
+      setTasks(prev => prev.map(t => t.id === editingTask.id ? updatedTask : t));
+      await updateTaskInFirestore(editingTask.id, updatedTask);
     } else {
       const parentIdForNewTask = taskData.parentId || targetParentId;
       const newId = Math.random().toString(36).substr(2, 9);
@@ -405,6 +509,7 @@ export default function App() {
         updatedAt: new Date(),
       };
       setTasks(prev => [newTask, ...prev]);
+      await saveTaskToFirestore(newTask);
       setLastCreatedTaskId(newId);
       setTimeout(() => setLastCreatedTaskId(null), 2000);
       
@@ -433,7 +538,7 @@ export default function App() {
     setExpansionSignals(prev => ({ ...prev, [parentId]: (prev[parentId] || 0) + 1 }));
   };
 
-  const addAiTask = () => {
+  const addAiTask = async () => {
     const newTask: Task = {
       id: Math.random().toString(36).substr(2, 9),
       userId: userProfile.id,
@@ -452,6 +557,7 @@ export default function App() {
       updatedAt: new Date()
     };
     setTasks([newTask, ...tasks]);
+    await saveTaskToFirestore(newTask);
     setShowAiModal(false);
   };
 
@@ -852,7 +958,7 @@ export default function App() {
                                      <div className="flex flex-col">
                                         <span className="truncate">{st.title}</span>
                                         {st.userId !== userProfile.id && (
-                                          <span className="text-[8px] text-indigo-400 font-black">Member: {MOCK_MEMBERS.find(m => m.id === st.userId)?.displayName}</span>
+                                          <span className="text-[8px] text-indigo-400 font-black">Member: {members.find(m => m.id === st.userId)?.displayName}</span>
                                         )}
                                      </div>
                                      <span className="opacity-50 text-[9px] whitespace-nowrap">{st.category}</span>
@@ -922,7 +1028,7 @@ export default function App() {
 
             {activeTab === 'messages' && (
                <MessagesView 
-                 members={MOCK_MEMBERS} 
+                 members={members} 
                  tasks={tasks} 
                  currentUser={userProfile}
                  onShareNewTask={() => {
@@ -938,46 +1044,44 @@ export default function App() {
                <div className="max-w-3xl mx-auto space-y-6">
                   <h2 className="text-2xl font-black mb-6 px-2">チームメンバーの進捗</h2>
                   <div className="space-y-4 px-2">
-                    {MOCK_COLLEAGUES_PROGRESS.map((p, idx) => {
-                      const member = MOCK_MEMBERS.find(m => m.id === p.userId);
-                      return (
-                        <div key={idx} className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(p.userId); setShowMemberDetail(true); }}>
+                    {memberProgress.map((progressItem, idx) => (
+                        <div key={idx} className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
                           <div className="flex items-center gap-4 flex-1 min-w-0">
                              <div className={cn(
                                 "w-12 h-12 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm shrink-0",
-                                p.status === 'doing' && "ring-indigo-500"
+                                progressItem.status === 'doing' && "ring-indigo-500"
                               )}>
-                                 {(member?.avatarUrl || member?.backgroundImageUrl) ? (
-                                   <img src={member.avatarUrl || member.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
-                                 ) : member?.displayName.split(' ').map(n => n[0]).join('')}
+                                 {(progressItem.member.avatarUrl || progressItem.member.backgroundImageUrl) ? (
+                                   <img src={progressItem.member.avatarUrl || progressItem.member.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                                 ) : progressItem.member.displayName.split(' ').map(n => n[0]).join('')}
                               </div>
                              <div className="min-w-0 flex-1">
                                <div className="flex items-center gap-3">
-                                  <div className="text-sm font-bold text-slate-800 truncate">{member?.displayName}</div>
-                                  {p.startPhoto && (
+                                  <div className="text-sm font-bold text-slate-800 truncate">{progressItem.member.displayName}</div>
+                                  {progressItem.startPhoto && (
                                     <div 
                                       className="w-10 h-10 rounded-lg overflow-hidden border-2 border-indigo-100 shrink-0 hover:ring-2 hover:ring-indigo-400 transition-all cursor-zoom-in"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setPreviewImage(p.startPhoto!);
+                                        setPreviewImage(progressItem.startPhoto!);
                                       }}
                                     >
-                                      <img src={p.startPhoto} className="w-full h-full object-cover" alt="Member Task" />
+                                      <img src={progressItem.startPhoto} className="w-full h-full object-cover" alt="Member Task" />
                                     </div>
                                   )}
                                </div>
                                <div className="text-[10px] text-indigo-600 font-bold mt-1 bg-indigo-50 inline-block px-2 py-0.5 rounded uppercase tracking-tighter">
-                                  {p.status === 'doing' ? '実行中' : 'タスク待機中'}
+                                  {progressItem.status === 'doing' ? '実行中' : progressItem.status === 'waiting' ? 'タスク待機中' : 'タスクなし'}
                                </div>
                              </div>
                           </div>
                           
                           <div className="flex-1 hidden md:block min-w-0">
-                             <div className="text-xs text-slate-500 mb-1 truncate">{p.taskTitle}</div>
+                             <div className="text-xs text-slate-500 mb-1 truncate">{progressItem.taskTitle}</div>
                              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                                 <motion.div 
                                   initial={{ width: 0 }}
-                                  animate={{ width: `${p.progress}%` }}
+                                  animate={{ width: `${progressItem.progress}%` }}
                                   className="h-full bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]"
                                 />
                              </div>
@@ -987,19 +1091,18 @@ export default function App() {
                             whileTap={{ scale: 0.9 }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleReaction(p.userId);
+                              handleReaction(progressItem.userId);
                             }}
                             className={cn(
                               "p-3 rounded-2xl transition-all flex flex-col items-center gap-1 min-w-[60px]",
-                              reactionSent[p.userId] ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
+                              reactionSent[progressItem.userId] ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
                             )}
                           >
-                            <ThumbsUp size={18} className={cn(reactionSent[p.userId] && "animate-bounce")} />
+                            <ThumbsUp size={18} className={cn(reactionSent[progressItem.userId] && "animate-bounce")} />
                             <span className="text-[9px] font-black italic">Fight!</span>
                           </motion.button>
                         </div>
-                      );
-                    })}
+                    ))}
                   </div>
                </div>
             )}
@@ -1227,7 +1330,7 @@ export default function App() {
         )}
         {showMemberDetail && selectedMemberId && (
            <MemberDetailModal 
-             member={MOCK_MEMBERS.find(m => m.id === selectedMemberId)!}
+             member={members.find(m => m.id === selectedMemberId)!}
              tasks={tasks}
              onClose={() => setShowMemberDetail(false)}
              onImageClick={(url) => setPreviewImage(url)}
@@ -1273,7 +1376,31 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
   const [avatarUrl, setAvatarUrl] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    const lastEmail = localStorage.getItem('syncTaskGamifyLastEmail');
+    if (lastEmail) {
+      setEmail(lastEmail);
+    }
+  }, []);
+
+  const saveLastEmail = (email: string) => {
+    localStorage.setItem('syncTaskGamifyLastEmail', email);
+  };
+
+  const getStoredUsers = () => {
+    return JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
+  };
+
+  const setStoredUsers = (users: Record<string, { email: string; avatarUrl?: string }>) => {
+    localStorage.setItem('syncTaskGamifyUsers', JSON.stringify(users));
+  };
+
+  const isFirestoreConfigured = IS_FIRESTORE_CONFIGURED;
+
+  const slackClientId = import.meta.env.VITE_SLACK_CLIENT_ID;
+  const slackRedirectUri = import.meta.env.VITE_SLACK_REDIRECT_URI;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!email) {
@@ -1284,23 +1411,70 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
       setError('有効なメールアドレスを入力してください');
       return;
     }
-    
-    const storedUsers = JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
 
+    const localUsers = getStoredUsers();
+    let firestoreFailed = false;
+
+    if (isFirestoreConfigured && db) {
+      try {
+        const memberRef = doc(db, MEMBERS_COLLECTION, email);
+        const memberSnapshot = await getDoc(memberRef);
+
+        if (isRegistering) {
+          if (memberSnapshot.exists()) {
+            setError('このメールアドレスは既に登録されています。ログイン画面からログインしてください。');
+            return;
+          }
+          const newProfile = createUserProfile(email, avatarUrl);
+          await setDoc(memberRef, newProfile);
+          saveLastEmail(email);
+          onLogin(email, avatarUrl);
+          return;
+        }
+
+        if (!memberSnapshot.exists()) {
+          if (localUsers[email]) {
+            saveLastEmail(email);
+            onLogin(email, localUsers[email].avatarUrl);
+            return;
+          }
+          setError('登録されていないメールアドレスです。初回登録を行ってください。');
+          return;
+        }
+
+        const savedMember = deserializeMember(memberSnapshot.data(), memberSnapshot.id);
+        saveLastEmail(email);
+        onLogin(email, savedMember.avatarUrl);
+        return;
+      } catch (error) {
+        console.error('Firestore login error:', error);
+        firestoreFailed = true;
+      }
+    }
+
+    // Firestoreが利用できない場合のローカルフォールバック
     if (isRegistering) {
-      if (storedUsers[email]) {
+      if (localUsers[email]) {
         setError('このメールアドレスは既に登録されています。ログイン画面からログインしてください。');
         return;
       }
-      storedUsers[email] = { email, avatarUrl };
-      localStorage.setItem('syncTaskGamifyUsers', JSON.stringify(storedUsers));
+      localUsers[email] = { email, avatarUrl };
+      setStoredUsers(localUsers);
+      saveLastEmail(email);
       onLogin(email, avatarUrl);
+      return;
+    }
+
+    if (localUsers[email]) {
+      saveLastEmail(email);
+      onLogin(email, localUsers[email].avatarUrl);
+      return;
+    }
+
+    if (firestoreFailed) {
+      setError('Firestoreに接続できませんでした。ローカル登録はまだ行われていません。');
     } else {
-      if (!storedUsers[email]) {
-        setError('登録されていないメールアドレスです。初回登録を行ってください。');
-        return;
-      }
-      onLogin(email, storedUsers[email].avatarUrl);
+      setError('登録されていないメールアドレスです。初回登録を行ってください。');
     }
   };
 
@@ -1310,9 +1484,15 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
        setError('Slack通知設定のため、先にメールアドレスを入力してください');
        return;
     }
-    console.log(`[Mock Slack Integration] 認証完了。以降、${email} 宛の通知は該当のSlackワークスペースにも送信されます。`);
-    // In a real app, this would redirect to Slack OAuth and return a token.
-    handleSubmit(e as any);
+
+    if (slackClientId && slackRedirectUri) {
+      const slackScope = 'chat:write,users:read,users:read.email';
+      const authUrl = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(slackClientId)}&scope=${encodeURIComponent(slackScope)}&redirect_uri=${encodeURIComponent(slackRedirectUri)}`;
+      window.location.href = authUrl;
+      return;
+    }
+
+    setError('Slack連携はまだ設定されていません。VITE_SLACK_CLIENT_ID と VITE_SLACK_REDIRECT_URI を .env で設定してください。');
   };
 
   return (
@@ -1408,7 +1588,7 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
           </form>
 
           <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-[10px] text-indigo-300 font-bold leading-relaxed">
-             💡 {isRegistering ? '登録したメールアドレス宛に通知が届きます。アイコンは後からでも変更可能です。' : 'Slackでログインすると、アプリ内の進捗やリアクションが指定のSlackチャンネルにも届きます（※現在はモック動作です）。'}
+             💡 {isRegistering ? '登録したメールアドレス宛に通知が届きます。入力したメールアドレスは次回ログイン時に自動入力されます。' : 'Slackでログインすると、Slack OAuthを使って通知連携が可能です。現在は環境変数が設定されている場合のみSlackの認可画面に遷移します。'}
           </div>
           
           <div className="pt-4 border-t border-white/10">
