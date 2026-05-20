@@ -1,0 +1,8 @@
+{
+  "name": "SyncTask Gamify",
+  "description": "Gamified task synchronization app with AI task proposals and real-time member progress.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
