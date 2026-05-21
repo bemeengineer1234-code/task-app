@@ -48,7 +48,10 @@ module.exports = async (req, res) => {
       }
     }
 
-    const baseUrl = process.env.APP_URL || (redirect_uri || '');
+    const requestHost = req.headers.host || '';
+    const protocol = process.env.NODE_ENV === 'development' ? 'http' : 'https';
+    const inferredAppUrl = requestHost ? `${protocol}://${requestHost.replace(/\/?$/, '')}` : '';
+    const baseUrl = process.env.APP_URL?.replace(/\/?$/, '') || inferredAppUrl || (redirect_uri || '');
     const sanitizedBase = baseUrl.replace(/\/?$/, '');
     const query = new URLSearchParams();
     if (email) query.append('slack_email', email);

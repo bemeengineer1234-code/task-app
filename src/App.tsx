@@ -611,7 +611,7 @@ export default function App() {
       groups[label].push(t);
     });
     return groups;
-  }, [tasks, showCompleted]);
+  }, [currentUserTasks, showCompleted]);
 
   if (!isLoggedIn) return <LoginScreen onLogin={handleLogin} />;
 
@@ -1394,6 +1394,7 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
         const localUsers = getStoredUsers();
         const avatarFromLocal = localUsers[slackEmail]?.avatarUrl;
         saveLastEmail(slackEmail);
+        setEmail(slackEmail);
         onLogin(slackEmail, avatarFromLocal, slackUid || undefined);
         const cleanUrl = window.location.origin + window.location.pathname;
         window.history.replaceState({}, '', cleanUrl);
