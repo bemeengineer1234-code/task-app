@@ -212,12 +212,12 @@ async function saveMemberToFirestore(member: UserProfile) {
   }
 }
 
-function createUserProfile(email: string, avatarUrl?: string): UserProfile {
+function createUserProfile(email: string, avatarUrl?: string, slackUid?: string): UserProfile {
   const displayName = email.split('@')[0];
   return {
     id: email,
     displayName,
-    slackUid: displayName,
+    slackUid: slackUid || displayName,
     backgroundImageUrl: avatarUrl || '',
     avatarUrl,
     currentStreak: 0,
@@ -280,9 +280,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isLocked, timerSeconds, activeTaskId, tasks]);
 
+  const currentUserTasks = useMemo(() => {
+    return tasks.filter(t => t.userId === userProfile.id);
+  }, [tasks, userProfile.id]);
+
   const allSearchableTasks = useMemo(() => {
-    return tasks;
-  }, [tasks]);
+    return currentUserTasks;
+  }, [currentUserTasks]);
 
   const memberProgress = useMemo(() => {
     return members.map(member => {
@@ -327,7 +331,7 @@ export default function App() {
     setExpandedTaskId(prev => prev === id ? null : id);
   };
 
-  const handleLogin = async (email?: string, avatarUrl?: string) => {
+  const handleLogin = async (email?: string, avatarUrl?: string, slackUid?: string) => {
     if (!email) return;
     console.log('Logged in with email:', email);
 
@@ -346,7 +350,7 @@ export default function App() {
           return;
         }
 
-        const newProfile = createUserProfile(email, avatarUrl);
+        const newProfile = createUserProfile(email, avatarUrl, slackUid);
         setUserProfile(newProfile);
         setMembers(prev => [...prev, newProfile]);
         await saveMemberToFirestore(newProfile);
@@ -371,7 +375,7 @@ export default function App() {
       return;
     }
 
-    const newProfile = createUserProfile(email, avatarUrl);
+    const newProfile = createUserProfile(email, avatarUrl, slackUid);
     setUserProfile(newProfile);
     setMembers(prev => [...prev, newProfile]);
     setIsLoggedIn(true);
@@ -564,28 +568,28 @@ export default function App() {
   const urgentTasks = useMemo(() => {
     const threeDaysFromNow = new Date();
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    return tasks.filter(t => 
+    return currentUserTasks.filter(t => 
       t.status !== 'done' && 
       !t.parentId && 
       t.dueDate && 
       t.dueDate <= threeDaysFromNow
     );
-  }, [tasks]);
+  }, [currentUserTasks]);
 
   const normalTasks = useMemo(() => {
     const threeDaysFromNow = new Date();
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    return tasks.filter(t => 
+    return currentUserTasks.filter(t => 
       t.status !== 'done' && 
       !t.parentId && 
       (!t.dueDate || t.dueDate > threeDaysFromNow)
     );
-  }, [tasks]);
+  }, [currentUserTasks]);
 
-  const activeTask = tasks.find(t => t.id === activeTaskId);
+  const activeTask = currentUserTasks.find(t => t.id === activeTaskId);
 
   const groupedTasks = useMemo(() => {
-    const list = showCompleted ? tasks.filter(t => t.status === 'done') : tasks.filter(t => t.status !== 'done' && !t.parentId);
+    const list = showCompleted ? currentUserTasks.filter(t => t.status === 'done') : currentUserTasks.filter(t => t.status !== 'done' && !t.parentId);
     
     // Sort by due date (fallback to Date.now() for missing/invalid dates to prevent NaN sort bugs)
     const sorted = [...list].sort((a, b) => {
@@ -818,7 +822,7 @@ export default function App() {
                               !showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
                             )}
                            >
-                             マイタスク ({tasks.filter(t => t.status !== 'done' && !t.parentId).length})
+                             マイタスク ({currentUserTasks.filter(t => t.status !== 'done' && !t.parentId).length})
                              {!showCompleted && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-full" />}
                            </button>
                            <button 
@@ -828,7 +832,7 @@ export default function App() {
                               showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
                             )}
                            >
-                             完了済み ({tasks.filter(t => t.status === 'done').length})
+                             完了済み ({currentUserTasks.filter(t => t.status === 'done').length})
                              {showCompleted && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-full" />}
                            </button>
                         </div>
@@ -897,7 +901,7 @@ export default function App() {
                             </motion.div>
                           ))}
                         </AnimatePresence>
-                        {tasks.filter(t => showCompleted ? (t.status === 'done') : (t.status !== 'done' && !t.parentId)).length === 0 && (
+                        {currentUserTasks.filter(t => showCompleted ? (t.status === 'done') : (t.status !== 'done' && !t.parentId)).length === 0 && (
                           <div className="py-20 text-center bg-white/5 rounded-[40px] border-2 border-dashed border-white/20">
                             {showCompleted ? (
                               <>
@@ -1370,7 +1374,7 @@ function ImagePreviewModal({ imageUrl, onClose }: { imageUrl: string, onClose: (
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string, slackUid?: string) => void }) {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -1380,6 +1384,20 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
     const lastEmail = localStorage.getItem('syncTaskGamifyLastEmail');
     if (lastEmail) {
       setEmail(lastEmail);
+    }
+
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const slackEmail = searchParams.get('slack_email');
+      const slackUid = searchParams.get('slack_uid');
+      if (slackEmail) {
+        const localUsers = getStoredUsers();
+        const avatarFromLocal = localUsers[slackEmail]?.avatarUrl;
+        saveLastEmail(slackEmail);
+        onLogin(slackEmail, avatarFromLocal, slackUid || undefined);
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      }
     }
   }, []);
 
@@ -1480,17 +1498,15 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string)
 
   const handleSlackLogin = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!email || !email.includes('@')) {
-       setError('Slack通知設定のため、先にメールアドレスを入力してください');
-       return;
-    }
-
-    if (slackClientId && slackRedirectUri) {
-      const slackScope = 'chat:write,users:read,users:read.email';
-      const authUrl = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(slackClientId)}&scope=${encodeURIComponent(slackScope)}&redirect_uri=${encodeURIComponent(slackRedirectUri)}`;
-      window.location.href = authUrl;
+    if (!slackClientId || !slackRedirectUri) {
+      setError('Slack連携はまだ設定されていません。VITE_SLACK_CLIENT_ID と VITE_SLACK_REDIRECT_URI を .env で設定してください。');
       return;
     }
+
+    const slackScope = 'chat:write,users:read,users:read.email';
+    const authUrl = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(slackClientId)}&scope=${encodeURIComponent(slackScope)}&redirect_uri=${encodeURIComponent(slackRedirectUri)}`;
+    window.location.href = authUrl;
+    return;
 
     setError('Slack連携はまだ設定されていません。VITE_SLACK_CLIENT_ID と VITE_SLACK_REDIRECT_URI を .env で設定してください。');
   };

@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 .next/
+
+.vercel
+.env*.local

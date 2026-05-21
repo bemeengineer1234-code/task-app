@@ -30,6 +30,8 @@ For Vercel deploy, add the same `VITE_` Firebase keys to the project environment
 
 If you want Slack login / notification integration, also add:
 - `VITE_SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
 - `VITE_SLACK_REDIRECT_URI`
 
 > Note: Slack OAuth requires a backend route to securely exchange the OAuth code for an access token and then send notifications to Slack.
+> Set `VITE_SLACK_REDIRECT_URI` to `https://<your-app>.vercel.app/api/slack/callback`.
