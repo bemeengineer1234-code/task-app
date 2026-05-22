@@ -224,12 +224,12 @@ async function deleteTaskFromFirestore(taskId: string) {
   }
 }
 
-async function saveMemberToFirestore(member: UserProfile) {
+async function saveMemberToFirestore(member: Partial<UserProfile> & { id: string }) {
   if (!db) return;
   try {
     await setDoc(doc(db, MEMBERS_COLLECTION, member.id), {
       ...member
-    });
+    }, { merge: true });
   } catch (error) {
     console.error('Firestore save member failed:', error);
   }
@@ -667,7 +667,7 @@ export default function App() {
       }
 
       const newCount = (targetMember.fightCount || 0) + 1;
-      await saveMemberToFirestore({ ...targetMember, fightCount: newCount });
+      await saveMemberToFirestore({ id: targetMember.id, fightCount: newCount });
     }
   };
 
@@ -3422,6 +3422,13 @@ function MessagesView({
                             )}
                           </div>
                         </div>
+                        {msg.senderId === currentUser.id && (
+                           <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden shadow-inner">
+                              {(currentUser.avatarUrl || currentUser.backgroundImageUrl) ? (
+                                <img src={currentUser.avatarUrl || currentUser.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
+                              ) : currentUser.displayName[0]}
+                           </div>
+                        )}
                       </div>
                    ))}
                 </div>
