@@ -84,7 +84,7 @@ interface Notification {
   id: string;
   userId: string;
   userName: string;
-  type: 'start' | 'end' | 'paused';
+  type: 'start' | 'end' | 'paused' | 'assigned' | 'fight';
   taskTitle: string;
   timestamp: Date;
 }
@@ -262,6 +262,15 @@ export default function App() {
   const [fightCount, setFightCount] = useState(userProfile.fightCount);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [toasts, setToasts] = useState<{id: string, message: string}[]>([]);
+
+  const showToast = (message: string) => {
+    const id = Math.random().toString(36).substring(2);
+    setToasts(prev => [...prev, {id, message}]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
   const [similarSearchQuery, setSimilarSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('すべて');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -392,6 +401,20 @@ export default function App() {
       timestamp: new Date()
     };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50));
+
+    let actionStr = '';
+    if (type === 'start') actionStr = `開始しました: ${taskTitle}`;
+    if (type === 'end') actionStr = `完了しました: ${taskTitle}`;
+    if (type === 'paused') actionStr = `停止しました: ${taskTitle}`;
+    if (type === 'assigned') actionStr = `${taskTitle}`;
+    if (type === 'fight') actionStr = `メンバーにFIGHTを送りました！`;
+    
+    if (actionStr) {
+      showToast(actionStr);
+      if (userProfile.slackUid) {
+        console.log(`[Slack Notification -> ${userProfile.slackUid}] ${actionStr}`);
+      }
+    }
   };
 
   const startTask = (taskId: string) => {
@@ -453,6 +476,7 @@ export default function App() {
     setIsLocked(false);
     setActiveTaskId(null);
     setShowGapModal(false);
+    if (task) addNotification('end', task.title);
     confetti({
       particleCount: 150,
       spread: 70,
@@ -462,6 +486,7 @@ export default function App() {
 
   const handleReaction = (userId: string) => {
     setReactionSent(prev => ({ ...prev, [userId]: true }));
+    addNotification('fight', '');
     setTimeout(() => {
       setReactionSent(prev => ({ ...prev, [userId]: false }));
     }, 1500);
@@ -1039,7 +1064,23 @@ export default function App() {
                    setEditingTask(null);
                    setTargetParentId(null);
                    setShowTaskForm(true);
-                   // We need to flag that this task should be shared after creation
+                 }}
+                 onAssignTask={async (task, targetUserId) => {
+                   const newId = Math.random().toString(36).substr(2, 9);
+                   const newTask: Task = {
+                     ...task,
+                     id: newId,
+                     userId: targetUserId,
+                     assignedBy: userProfile.id,
+                     status: 'todo',
+                     actualMinutes: 0,
+                     startPhoto: undefined,
+                     mismatchReason: '',
+                     updatedAt: new Date()
+                   };
+                   setTasks(prev => [newTask, ...prev]);
+                   await saveTaskToFirestore(newTask);
+                   addNotification('assigned', `タスク「${task.title}」をアサインしました`);
                  }}
                />
             )}
@@ -1345,6 +1386,23 @@ export default function App() {
           <ImagePreviewModal imageUrl={previewImage} onClose={() => setPreviewImage(null)} />
         )}
       </AnimatePresence>
+      {/* Toast Notifications */}
+      <div className="fixed bottom-6 right-6 z-[300] flex flex-col gap-2 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map(toast => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: 50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-slate-900/90 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700 pointer-events-auto"
+            >
+              <Bell size={18} className="text-indigo-400" />
+              <span className="text-sm font-bold">{toast.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -1952,6 +2010,12 @@ function TaskCard({
             className="overflow-hidden border-t border-slate-50"
           >
             <div className="p-3 pt-2 space-y-3">
+              {task.mismatchReason && (
+                <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 flex flex-col gap-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-400">⚠️ 完了時間の誤差理由</span>
+                  <p className="text-xs font-bold text-slate-700">{task.mismatchReason}</p>
+                </div>
+              )}
               {task.description && (
                 <div className="bg-slate-50 rounded-xl p-2.5 text-[10px] font-medium text-slate-600 italic">
                   {task.description}
@@ -2971,7 +3035,7 @@ function DayCell({ day, dayTasks, onDayClick }: { day: Date, dayTasks: Task[], o
   );
 }
 
-function MessagesView({ members, tasks, currentUser, onShareNewTask }: { members: UserProfile[], tasks: Task[], currentUser: UserProfile, onShareNewTask: () => void }) {
+function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTask }: { members: UserProfile[], tasks: Task[], currentUser: UserProfile, onShareNewTask: () => void, onAssignTask: (task: Task, targetUserId: string) => void }) {
   const [selectedThread, setSelectedThread] = useState<UserProfile | null>(null);
   const [search, setSearch] = useState('');
   const [msgInput, setMsgInput] = useState('');
@@ -3009,6 +3073,9 @@ function MessagesView({ members, tasks, currentUser, onShareNewTask }: { members
 
   const shareTask = (task: Task) => {
     handleSendMessage(`タスクを共有しました: ${task.title}`, task.id);
+    if (selectedThread) {
+      onAssignTask(task, selectedThread.id);
+    }
   };
 
   const [showNewTaskInChat, setShowNewTaskInChat] = useState(false);
