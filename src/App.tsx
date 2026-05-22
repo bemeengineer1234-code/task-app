@@ -969,10 +969,21 @@ export default function App() {
                                 <p className="text-white font-black">まだ完了したタスクはありません</p>
                               </>
                             ) : (
-                              <>
-                                <Sparkles className="mx-auto text-white/40 mb-4" size={40} />
-                                <p className="text-white font-black">全てのタスクが完了しました！</p>
-                              </>
+                              <div className="space-y-4 max-w-sm mx-auto p-4">
+                                <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-500/20">
+                                  <Sparkles className="text-indigo-400" size={32} />
+                                </div>
+                                <h3 className="text-xl font-black text-white">タスクがありません</h3>
+                                <p className="text-sm font-medium text-slate-300 leading-relaxed">
+                                  右上の「タスク追加」ボタンから、今日やるべきことを書き出してみましょう。チームに見守られながら集中して取り組めます。
+                                </p>
+                                <button 
+                                  onClick={() => setShowTaskForm(true)}
+                                  className="mt-4 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold transition-all active:scale-95 shadow-xl shadow-indigo-500/30 w-full"
+                                >
+                                  最初のタスクを作成する
+                                </button>
+                              </div>
                             )}
                           </div>
                         )}
@@ -1616,15 +1627,23 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
         animate={{ y: 0, opacity: 1 }}
         className="w-full max-w-md relative z-10 space-y-8 text-center"
       >
-        <div className="space-y-2">
-          <div className="inline-flex items-center justify-center p-4 bg-indigo-500/10 rounded-3xl border border-indigo-500/20 mb-4">
+        <div className="space-y-4">
+          <div className="inline-flex items-center justify-center p-4 bg-indigo-500/20 rounded-3xl border border-indigo-500/30 mb-2 shadow-lg shadow-indigo-500/20">
             <Sparkles size={48} className="text-indigo-400" />
           </div>
-          <h1 className="text-4xl font-black text-white tracking-tight">SyncTask <span className="text-indigo-500">Gamify</span></h1>
-          <p className="text-slate-400 font-medium">業務効率化を「ゲーム」に。チームと同期しよう。</p>
+          <h1 className="text-5xl md:text-6xl font-black text-white tracking-tight drop-shadow-md">
+            Sync<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Task</span>
+          </h1>
+          <p className="text-slate-300 font-bold text-lg md:text-xl max-w-sm mx-auto leading-relaxed">互いにプレッシャーをかけて、<br/>意識と生産性を高め合おう。</p>
+          
+          <div className="flex flex-wrap justify-center gap-2 pt-2 pb-4">
+            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-indigo-300 shadow-sm">🔥 FIGHT機能</span>
+            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-purple-300 shadow-sm">⏱️ 予実の振り返り</span>
+            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-pink-300 shadow-sm">📸 証拠写真の共有</span>
+          </div>
         </div>
 
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-[32px] p-8 space-y-6">
+        <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] p-8 space-y-6 shadow-2xl">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2 text-left">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">メールアドレス</label>
