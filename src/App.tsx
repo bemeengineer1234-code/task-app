@@ -537,6 +537,8 @@ export default function App() {
     }
 
     const newProfile = createUserProfile(email);
+    storedUsers[email] = { email };
+    localStorage.setItem('syncTaskGamifyUsers', JSON.stringify(storedUsers));
     setUserProfile(newProfile);
     setMembers(prev => [...prev, newProfile]);
     setIsLoggedIn(true);
