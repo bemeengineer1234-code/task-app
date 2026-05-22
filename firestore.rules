@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// メールのみのログイン方式のため、開発・小規模チーム向けにオープンルールです。
+// 本番で厳格化する場合は Firebase Authentication の導入を検討してください。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /members/{memberId} {
+      allow read, write: if true;
+    }
+    match /tasks/{taskId} {
+      allow read, write: if true;
+    }
+    match /chatMessages/{messageId} {
+      allow read, write: if true;
+    }
+  }
+}

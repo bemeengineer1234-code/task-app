@@ -55,6 +55,7 @@ interface UserProfile {
   currentStreak: number;
   badges: string[];
   fightCount: number;
+  lastLoginAt?: Date;
 }
 
 type TaskStatus = 'todo' | 'doing' | 'paused_break' | 'paused_urgent' | 'retained' | 'done';
@@ -121,6 +122,9 @@ const INITIAL_TASKS: Task[] = [];
 const TASKS_COLLECTION = 'tasks';
 const MEMBERS_COLLECTION = 'members';
 const MESSAGES_COLLECTION = 'chatMessages';
+const SESSION_STORAGE_KEY = 'syncTaskGamifySession';
+const LAST_EMAIL_STORAGE_KEY = 'syncTaskGamifyLastEmail';
+const LOCAL_MEMBERS_STORAGE_KEY = 'syncTaskGamifyUsers';
 const IS_FIRESTORE_CONFIGURED = Boolean(
   import.meta.env.VITE_FIREBASE_API_KEY &&
   import.meta.env.VITE_FIREBASE_AUTH_DOMAIN &&
@@ -157,17 +161,47 @@ function deserializeTask(entry: any, id?: string): Task {
   };
 }
 
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 function deserializeMember(entry: any, id?: string): UserProfile {
+  const memberId = id || entry.id || entry.email || '';
   return {
-    id: id || entry.id || '',
-    displayName: entry.displayName || entry.email?.split('@')[0] || '',
+    id: memberId,
+    displayName: entry.displayName || entry.email?.split('@')[0] || memberId.split('@')[0] || 'ゲスト',
     avatarUrl: entry.avatarUrl || '',
-    slackUid: entry.slackUid || entry.email?.split('@')[0] || '',
+    slackUid: entry.slackUid || entry.email?.split('@')[0] || memberId.split('@')[0] || '',
     backgroundImageUrl: entry.backgroundImageUrl || '',
     currentStreak: entry.currentStreak || 0,
     badges: entry.badges || [],
-    fightCount: entry.fightCount || 0
+    fightCount: entry.fightCount || 0,
+    lastLoginAt: entry.lastLoginAt ? normalizeFirestoreDate(entry.lastLoginAt) : undefined
   };
+}
+
+function loadMembersFromLocalStorage(): UserProfile[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_MEMBERS_STORAGE_KEY) || '{}');
+    return Object.entries(stored).map(([id, data]) => deserializeMember(data, id));
+  } catch {
+    return [];
+  }
+}
+
+function persistMemberToLocalStorage(member: UserProfile) {
+  if (typeof window === 'undefined') return;
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_MEMBERS_STORAGE_KEY) || '{}');
+    stored[member.id] = {
+      ...member,
+      lastLoginAt: member.lastLoginAt?.toISOString?.() ?? member.lastLoginAt
+    };
+    localStorage.setItem(LOCAL_MEMBERS_STORAGE_KEY, JSON.stringify(stored));
+  } catch (e) {
+    console.error('Local member save failed:', e);
+  }
 }
 
 async function saveTaskToFirestore(task: Task) {
@@ -225,11 +259,14 @@ async function deleteTaskFromFirestore(taskId: string) {
 async function saveMemberToFirestore(member: Partial<UserProfile> & { id: string }) {
   if (!db) return;
   try {
-    await setDoc(doc(db, MEMBERS_COLLECTION, member.id), {
-      ...member
-    }, { merge: true });
+    const payload: Record<string, unknown> = { ...member };
+    if (member.lastLoginAt instanceof Date) {
+      payload.lastLoginAt = member.lastLoginAt;
+    }
+    await setDoc(doc(db, MEMBERS_COLLECTION, member.id), payload, { merge: true });
   } catch (error) {
     console.error('Firestore save member failed:', error);
+    throw error;
   }
 }
 
@@ -272,6 +309,7 @@ function createUserProfile(email: string, avatarUrl?: string, slackUid?: string)
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : false
   );
@@ -291,14 +329,7 @@ export default function App() {
   });
   const [members, setMembers] = useState<UserProfile[]>(() => {
     if (typeof window === 'undefined') return [];
-    if (!IS_FIRESTORE_CONFIGURED) {
-      try {
-        const storedUsers = JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
-        return Object.values(storedUsers).map((u: any) => createUserProfile(u.email, u.avatarUrl));
-      } catch (e) {
-        return [];
-      }
-    }
+    if (!IS_FIRESTORE_CONFIGURED) return loadMembersFromLocalStorage();
     return [];
   });
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
@@ -375,7 +406,7 @@ export default function App() {
       if (a.status !== 'doing' && b.status === 'doing') return 1;
       if (a.status === 'none' && b.status !== 'none') return 1;
       if (a.status !== 'none' && b.status === 'none') return -1;
-      return 0;
+      return a.member.displayName.localeCompare(b.member.displayName, 'ja');
     });
   }, [members, tasks]);
 
@@ -475,68 +506,89 @@ export default function App() {
     }
     if (userProfile.id) {
        const timeout = setTimeout(() => {
-         saveMemberToFirestore(userProfile);
+         saveMemberToFirestore(userProfile).catch(() => {});
+         persistMemberToLocalStorage(userProfile);
+         if (!IS_FIRESTORE_CONFIGURED) {
+           setMembers(loadMembersFromLocalStorage());
+         }
        }, 500);
        return () => clearTimeout(timeout);
     }
   }, [userProfile.displayName, userProfile.avatarUrl, userProfile.backgroundImageUrl, userProfile.slackUid]);
 
-  const handleToggleExpand = (id: string) => {
-    setExpandedTaskId(prev => prev === id ? null : id);
-  };
+  const loginWithEmail = async (rawEmail: string): Promise<boolean> => {
+    const email = normalizeEmail(rawEmail);
+    if (!email.includes('@')) return false;
 
-  const handleLogin = async (email?: string) => {
-    if (!email) return;
-    console.log('Logged in with email:', email);
+    const now = new Date();
+    let profile: UserProfile;
 
     if (IS_FIRESTORE_CONFIGURED && db) {
       try {
         const memberRef = doc(db, MEMBERS_COLLECTION, email);
         const memberSnapshot = await getDoc(memberRef);
         if (memberSnapshot.exists()) {
-          const existingMember = deserializeMember(memberSnapshot.data(), memberSnapshot.id);
-          setUserProfile(existingMember);
-          setMembers(prev => {
-            if (prev.some(member => member.id === existingMember.id)) return prev;
-            return [...prev, existingMember];
-          });
-          setIsLoggedIn(true);
-          return;
+          profile = {
+            ...deserializeMember(memberSnapshot.data(), memberSnapshot.id),
+            lastLoginAt: now
+          };
+        } else {
+          profile = { ...createUserProfile(email), lastLoginAt: now };
         }
-
-        const newProfile = createUserProfile(email);
-        setUserProfile(newProfile);
-        setMembers(prev => [...prev, newProfile]);
-        await saveMemberToFirestore(newProfile);
+        await saveMemberToFirestore(profile);
+        persistMemberToLocalStorage(profile);
+        setUserProfile(profile);
         setIsLoggedIn(true);
-        return;
+        localStorage.setItem(SESSION_STORAGE_KEY, email);
+        localStorage.setItem(LAST_EMAIL_STORAGE_KEY, email);
+        return true;
       } catch (error) {
-        console.error('Firestore handleLogin error:', error);
+        console.error('Firestore login error:', error);
       }
     }
 
-    // Firestoreが使えない場合のローカルフォールバック
-    const storedUsers = JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
+    const storedUsers = JSON.parse(localStorage.getItem(LOCAL_MEMBERS_STORAGE_KEY) || '{}');
     const saved = storedUsers[email];
     if (saved) {
-      const existingMember = createUserProfile(email, saved.avatarUrl);
-      setUserProfile(existingMember);
-      setMembers(prev => {
-        if (prev.some(member => member.id === existingMember.id)) return prev;
-        return [...prev, existingMember];
-      });
-      setIsLoggedIn(true);
-      return;
+      profile = { ...deserializeMember(saved, email), lastLoginAt: now };
+    } else {
+      profile = { ...createUserProfile(email), lastLoginAt: now };
     }
-
-    const newProfile = createUserProfile(email);
-    storedUsers[email] = { email };
-    localStorage.setItem('syncTaskGamifyUsers', JSON.stringify(storedUsers));
-    setUserProfile(newProfile);
-    setMembers(prev => [...prev, newProfile]);
+    persistMemberToLocalStorage(profile);
+    setMembers(loadMembersFromLocalStorage());
+    setUserProfile(profile);
     setIsLoggedIn(true);
+    localStorage.setItem(SESSION_STORAGE_KEY, email);
+    localStorage.setItem(LAST_EMAIL_STORAGE_KEY, email);
+    return true;
   };
-  const handleLogout = () => setIsLoggedIn(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const sessionEmail = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (sessionEmail) {
+        await loginWithEmail(sessionEmail);
+      }
+      if (!cancelled) setSessionBootstrapped(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleToggleExpand = (id: string) => {
+    setExpandedTaskId(prev => prev === id ? null : id);
+  };
+
+  const handleLogin = async (email?: string): Promise<boolean> => {
+    if (!email) return false;
+    return loginWithEmail(email);
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setUserProfile(DEFAULT_USER_PROFILE);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  };
 
   const sendSlackWebhook = async (text: string) => {
     const webhookUrl = import.meta.env.VITE_SLACK_WEBHOOK_URL;
@@ -798,7 +850,18 @@ export default function App() {
     return groups;
   }, [currentUserTasks, showCompleted]);
 
-  if (!isLoggedIn) return <LoginScreen onLogin={handleLogin} />;
+  if (!sessionBootstrapped) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-sm text-slate-500 font-medium">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isLoggedIn) return <LoginScreen onLogin={handleLogin} isFirestoreEnabled={IS_FIRESTORE_CONFIGURED} />;
 
   return (
     <div className="min-h-screen font-sans text-slate-800 bg-slate-50">
@@ -1171,9 +1234,22 @@ export default function App() {
 
             {activeTab === 'members' && (
                <div className="max-w-3xl mx-auto space-y-6">
-                  <h2 className="text-xl font-bold text-slate-900 mb-4">チームメンバー</h2>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">チームメンバー</h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {members.length}人が登録済み（ログインした全員が表示されます）
+                    </p>
+                  </div>
                   <div className="space-y-4 px-2">
-                    {memberProgress.map((progressItem, idx) => (
+                    {memberProgress.length === 0 ? (
+                      <div className="py-16 text-center rounded-2xl border border-dashed border-slate-200 bg-white">
+                        <User className="mx-auto text-slate-300 mb-3" size={40} />
+                        <p className="text-slate-600 font-semibold">まだメンバーがいません</p>
+                        <p className="text-sm text-slate-500 mt-2 max-w-xs mx-auto">
+                          アプリのURLを共有し、それぞれのメールアドレスでログインしてもらうとここに表示されます。
+                        </p>
+                      </div>
+                    ) : memberProgress.map((progressItem, idx) => (
                         <div key={idx} className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
                           <div className="flex items-center gap-4 flex-1 min-w-0">
                              <div className={cn(
@@ -1185,8 +1261,11 @@ export default function App() {
                                  ) : progressItem.member.displayName.split(' ').map(n => n[0]).join('')}
                               </div>
                              <div className="min-w-0 flex-1">
-                               <div className="flex items-center gap-3">
-                                  <div className="text-sm font-bold text-slate-800 truncate">{progressItem.member.displayName}</div>
+                               <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  <div className="flex flex-col min-w-0">
+                                    <div className="text-sm font-bold text-slate-800 truncate">{progressItem.member.displayName}</div>
+                                    <div className="text-xs text-slate-400 truncate">{progressItem.member.id}</div>
+                                  </div>
                                   {progressItem.startPhoto && (
                                     <div 
                                       className="w-10 h-10 rounded-lg overflow-hidden border-2 border-indigo-100 shrink-0 hover:ring-2 hover:ring-indigo-400 transition-all cursor-zoom-in"
@@ -1245,6 +1324,10 @@ export default function App() {
                     <div>
                        <label className="text-sm font-semibold text-slate-700 block mb-4">プロフィール</label>
                        <div className="space-y-4">
+                          <div className="flex flex-col gap-1.5">
+                             <span className="text-xs font-medium text-slate-500">ログイン中のアカウント</span>
+                             <p className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">{userProfile.id}</p>
+                          </div>
                           <div className="flex flex-col gap-1.5">
                              <span className="text-xs font-medium text-slate-500">表示名</span>
                              <input 
@@ -1454,12 +1537,13 @@ function ImagePreviewModal({ imageUrl, onClose }: { imageUrl: string, onClose: (
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin }: { onLogin: (email: string) => void }) {
+function LoginScreen({ onLogin, isFirestoreEnabled }: { onLogin: (email: string) => Promise<boolean>; isFirestoreEnabled: boolean }) {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const lastEmail = localStorage.getItem('syncTaskGamifyLastEmail');
+    const lastEmail = localStorage.getItem(LAST_EMAIL_STORAGE_KEY);
     if (lastEmail) {
       setEmail(lastEmail);
     }
@@ -1468,17 +1552,25 @@ function LoginScreen({ onLogin }: { onLogin: (email: string) => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!email) {
+    const normalized = normalizeEmail(email);
+    if (!normalized) {
       setError('メールアドレスを入力してください');
       return;
     }
-    if (!email.includes('@')) {
+    if (!normalized.includes('@')) {
       setError('有効なメールアドレスを入力してください');
       return;
     }
 
-    localStorage.setItem('syncTaskGamifyLastEmail', email);
-    onLogin(email);
+    setIsSubmitting(true);
+    try {
+      const ok = await onLogin(normalized);
+      if (!ok) {
+        setError('ログインに失敗しました。接続を確認して再度お試しください。');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -1516,14 +1608,20 @@ function LoginScreen({ onLogin }: { onLogin: (email: string) => void }) {
 
             <button 
               type="submit"
-              className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-semibold hover:bg-indigo-700 transition-all active:scale-[0.98]"
+              disabled={isSubmitting}
+              className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-semibold hover:bg-indigo-700 transition-all active:scale-[0.98] disabled:opacity-60"
             >
-              ログイン
+              {isSubmitting ? 'ログイン中...' : 'ログイン'}
             </button>
           </form>
 
           <p className="text-xs text-slate-500 leading-relaxed">
-            メールアドレスだけでログインできます。未登録の場合は自動でアカウントが作成されます。
+            初回はアカウントが自動作成され、次回から同じメールでログインできます。チーム全員がメンバー一覧に表示されます。
+            {!isFirestoreEnabled && (
+              <span className="block mt-2 text-amber-700 font-medium">
+                ※ 本番URLで全員共有するには Vercel に Firebase 環境変数の設定が必要です。
+              </span>
+            )}
           </p>
         </div>
       </motion.div>

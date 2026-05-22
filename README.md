@@ -21,8 +21,21 @@ View your app in AI Studio: https://ai.studio/apps/3b82aed9-6e8b-4078-a43c-33eb2
    - `VITE_FIREBASE_STORAGE_BUCKET`
    - `VITE_FIREBASE_MESSAGING_SENDER_ID`
    - `VITE_FIREBASE_APP_ID`
-3. In the Firebase console, enable Firestore for your project. The app uses Firestore collections named `tasks` and `members`.
-4. Run the app locally:
+3. In the Firebase console, enable **Firestore** for your project.
+4. Deploy security rules from `firestore.rules` (Firebase Console → Firestore → Rules → paste & publish), or run `firebase deploy --only firestore:rules`.
+5. The app uses collections: `members` (user accounts by email), `tasks`, `chatMessages`.
+
+### Shared team usage (important for Vercel URL)
+
+When everyone opens the same app URL and logs in with their email:
+
+- **First login** → account is created and saved (Firestore + local backup).
+- **Next visit** → same email auto-logs in (session saved in browser).
+- **Members tab** → shows everyone who has logged in (synced via Firestore in real time).
+
+**You must set all `VITE_FIREBASE_*` variables on Vercel.** Without them, data stays only in each browser and members cannot see each other across devices.
+
+6. Run the app locally:
    `npm run dev`
 
 ## Deploy (GitHub → Vercel)
