@@ -448,6 +448,14 @@ export default function App() {
     }
   }, [tasks, userProfile.id, prevTaskIds]);
 
+  // メンバー情報から自身のfightCount等を同期
+  useEffect(() => {
+    const me = members.find(m => m.id === userProfile.id);
+    if (me && me.fightCount !== userProfile.fightCount) {
+      setUserProfile(prev => ({ ...prev, fightCount: me.fightCount }));
+    }
+  }, [members, userProfile.id, userProfile.fightCount]);
+
   const handleToggleExpand = (id: string) => {
     setExpandedTaskId(prev => prev === id ? null : id);
   };
@@ -609,12 +617,18 @@ export default function App() {
     });
   };
 
-  const handleReaction = (userId: string) => {
+  const handleReaction = async (userId: string) => {
     setReactionSent(prev => ({ ...prev, [userId]: true }));
     // addNotification('fight', ''); // 通知リストにのみ追加され、Slackやトーストには出ない
     setTimeout(() => {
       setReactionSent(prev => ({ ...prev, [userId]: false }));
     }, 1500);
+
+    const targetMember = members.find(m => m.id === userId);
+    if (targetMember) {
+      const newCount = (targetMember.fightCount || 0) + 1;
+      await saveMemberToFirestore({ ...targetMember, fightCount: newCount });
+    }
   };
 
   const handleDeleteTask = async (taskId: string) => {
@@ -1199,10 +1213,8 @@ export default function App() {
                    setShowTaskForm(true);
                  }}
                  onAssignTask={async (task, targetUserId) => {
-                   const newId = Math.random().toString(36).substr(2, 9);
-                   const newTask: Task = {
+                   const updatedTask: Task = {
                      ...task,
-                     id: newId,
                      userId: targetUserId,
                      assignedBy: userProfile.id,
                      status: 'todo',
@@ -1211,8 +1223,8 @@ export default function App() {
                      mismatchReason: '',
                      updatedAt: new Date()
                    };
-                   setTasks(prev => [newTask, ...prev]);
-                   await saveTaskToFirestore(newTask);
+                   setTasks(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+                   await updateTaskInFirestore(task.id, updatedTask);
                    addNotification('assigned', `タスク「${task.title}」をアサインしました`);
                  }}
                  globalMessages={chatMessages}
@@ -2112,6 +2124,11 @@ function TaskCard({
                {task.status === 'done' && task.updatedAt && (
                  <span className="text-emerald-500 flex items-center gap-1">
                    <CheckCircle2 size={9} /> {format(task.updatedAt, "MM/dd HH:mm")} 完了
+                 </span>
+               )}
+               {task.status === 'done' && task.actualMinutes !== undefined && (
+                 <span className="text-emerald-500 flex items-center gap-1">
+                   <Clock size={9} /> 実績: {task.actualMinutes}分
                  </span>
                )}
             </div>
