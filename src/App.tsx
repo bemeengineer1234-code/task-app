@@ -59,8 +59,6 @@ interface UserProfile {
 
 type TaskStatus = 'todo' | 'doing' | 'paused_break' | 'paused_urgent' | 'retained' | 'done';
 type TaskPriority = 'high' | 'medium' | 'low';
-type AppTheme = 'default' | 'ocean' | 'forest' | 'sunset' | 'minimal';
-
 interface Task {
   id: string;
   userId: string;
@@ -306,10 +304,8 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   // `isLocked` と `activeTaskId` は `useState` ではなく `currentUserTasks` から導出する（後述）
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [theme, setTheme] = useState<AppTheme>('default');
   const [timerSeconds, setTimerSeconds] = useState(2700); // 45 mins
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [showAiModal, setShowAiModal] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showGapModal, setShowGapModal] = useState(false);
   const [showRescueModal, setShowRescueModal] = useState(false);
@@ -332,7 +328,6 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
   };
-  const [similarSearchQuery, setSimilarSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('すべて');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [availableCategories, setAvailableCategories] = useState<string[]>(['作業', '調査', '会議', '休憩', 'Design', 'Engineering', 'Marketing']);
@@ -360,10 +355,6 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [isLocked, timerSeconds, activeTaskId, tasks]);
-
-  const allSearchableTasks = useMemo(() => {
-    return currentUserTasks;
-  }, [currentUserTasks]);
 
   const memberProgress = useMemo(() => {
     const list = members.map(member => {
@@ -772,49 +763,15 @@ export default function App() {
     setExpansionSignals(prev => ({ ...prev, [parentId]: (prev[parentId] || 0) + 1 }));
   };
 
-  const addAiTask = async () => {
-    const newTask: Task = {
-      id: Math.random().toString(36).substr(2, 9),
-      userId: userProfile.id,
-      assignedBy: 'AIアシスタント',
-      parentId: null,
-      title: 'ユーザーフィードバックの分析',
-      description: '最近のフィードバックから緊急性の高い課題を抽出してまとめます。',
-      priority: 'medium',
-      category: 'AI提案',
-      estimatedMinutes: 30,
-      actualMinutes: 0,
-      status: 'todo',
-      mismatchReason: '',
-      attachments: [],
-      dueDate: new Date(),
-      updatedAt: new Date()
-    };
-    setTasks([newTask, ...tasks]);
-    await saveTaskToFirestore(newTask);
-    setShowAiModal(false);
-  };
+  const pendingTaskCount = useMemo(
+    () => currentUserTasks.filter(t => t.status !== 'done' && !t.parentId).length,
+    [currentUserTasks]
+  );
 
-  const urgentTasks = useMemo(() => {
-    const threeDaysFromNow = new Date();
-    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    return currentUserTasks.filter(t => 
-      t.status !== 'done' && 
-      !t.parentId && 
-      t.dueDate && 
-      t.dueDate <= threeDaysFromNow
-    );
-  }, [currentUserTasks]);
-
-  const normalTasks = useMemo(() => {
-    const threeDaysFromNow = new Date();
-    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-    return currentUserTasks.filter(t => 
-      t.status !== 'done' && 
-      !t.parentId && 
-      (!t.dueDate || t.dueDate > threeDaysFromNow)
-    );
-  }, [currentUserTasks]);
+  const completedTaskCount = useMemo(
+    () => currentUserTasks.filter(t => t.status === 'done').length,
+    [currentUserTasks]
+  );
 
   const groupedTasks = useMemo(() => {
     const list = showCompleted ? currentUserTasks.filter(t => t.status === 'done') : currentUserTasks.filter(t => t.status !== 'done' && !t.parentId);
@@ -843,22 +800,9 @@ export default function App() {
 
   if (!isLoggedIn) return <LoginScreen onLogin={handleLogin} />;
 
-  const themeConfigs = {
-    default: "bg-slate-900/40",
-    ocean: "bg-blue-900/40",
-    forest: "bg-emerald-900/40",
-    sunset: "bg-rose-900/40",
-    minimal: "bg-white/80"
-  };
-
-  const themeText = theme === 'minimal' ? 'text-slate-800' : 'text-white';
-
   return (
-    <div 
-      className="min-h-screen font-sans text-slate-800 bg-fixed bg-cover bg-center transition-all duration-700 bg-white"
-      style={{ backgroundImage: userProfile.backgroundImageUrl ? `url(${userProfile.backgroundImageUrl})` : 'none' }}
-    >
-      <div className={cn("min-h-screen flex overflow-x-hidden", themeConfigs[theme])}>
+    <div className="min-h-screen font-sans text-slate-800 bg-slate-50">
+      <div className="min-h-screen flex overflow-x-hidden bg-white">
         
         <Sidebar 
           sidebarOpen={sidebarOpen}
@@ -880,13 +824,10 @@ export default function App() {
 
         {/* Main Content */}
         <main className={cn(
-          "flex-1 transition-all duration-300 lg:ml-64 w-full h-screen overflow-y-auto scrollbar-hide",
+          "flex-1 transition-all duration-300 lg:ml-64 w-full h-screen overflow-y-auto scrollbar-hide bg-slate-50",
           !sidebarOpen && "ml-0"
         )}>
-          <header className={cn(
-            "sticky top-0 z-30 backdrop-blur-md border-b border-slate-200/50 p-3 sm:p-4 flex items-center gap-2 sm:gap-4 min-w-0",
-            theme === 'minimal' ? "bg-white/50" : "bg-black/20"
-          )}>
+          <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 p-3 sm:p-4 flex items-center gap-2 sm:gap-4 min-w-0">
             {!sidebarOpen && (
               <div className="flex items-center gap-3">
                 <button 
@@ -896,16 +837,20 @@ export default function App() {
                   <Menu size={20} />
                 </button>
                 <div 
-                  className="w-8 h-8 rounded-full overflow-hidden border border-white/20 cursor-pointer"
+                  className="w-8 h-8 rounded-full overflow-hidden border border-slate-200 bg-indigo-100 cursor-pointer flex items-center justify-center text-xs font-bold text-indigo-700"
                   onClick={() => setActiveTab('settings')}
                 >
-                  <img src={userProfile.avatarUrl || userProfile.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                  {userProfile.avatarUrl ? (
+                    <img src={userProfile.avatarUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                  ) : (
+                    userProfile.displayName.charAt(0).toUpperCase()
+                  )}
                 </div>
               </div>
             )}
-            <h1 className={cn("text-base sm:text-xl font-bold truncate min-w-0 flex-1", theme === 'minimal' ? 'text-slate-800' : 'text-white')}>
-              {activeTab === 'dashboard' ? 'ダッシュボード' : 
-               activeTab === 'members' ? 'メンバー進捗' :
+            <h1 className="text-base sm:text-xl font-bold truncate min-w-0 flex-1 text-slate-900">
+              {activeTab === 'dashboard' ? 'ホーム' : 
+               activeTab === 'members' ? 'メンバー' :
                activeTab === 'calendar' ? 'カレンダー' : 
                activeTab === 'settings' ? '設定' : 'メッセージ'}
             </h1>
@@ -969,308 +914,215 @@ export default function App() {
             </div>
           </header>
 
-          <div className="p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto">
+          <div className="p-4 md:p-6 max-w-3xl mx-auto w-full">
             {activeTab === 'dashboard' && (
-              <>
-                {/* Active Timer Lock Area */}
+              <div className="space-y-5">
                 {isLocked && activeTask && (
                   <motion.div 
-                    initial={{ y: -20, opacity: 0 }}
+                    initial={{ y: -12, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
-                    className="bg-slate-900 text-white rounded-3xl p-6 shadow-2xl relative overflow-hidden mb-8"
+                    className="bg-white border border-indigo-200 border-l-4 border-l-indigo-500 rounded-2xl p-5 shadow-sm"
                   >
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-2 text-indigo-400 text-sm font-bold uppercase tracking-wider">
-                          <Clock size={16} />
-                          <span>{activeTask.status === 'doing' ? 'シングルタスク・ロック中' : '一時中断中（救済ステータス）'}</span>
-                        </div>
-                        <h2 className="text-2xl font-bold">{activeTask.title}</h2>
-                        <div className="flex items-center gap-4">
-                           <div className="flex items-center gap-1 text-slate-400 text-sm">
-                             <User size={14} />
-                             <span>自分自身のタスクに集中</span>
-                           </div>
-                           <div className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded text-xs font-bold uppercase">
-                             {activeTask.category}
-                           </div>
-                           {activeTask.fights && activeTask.fights.length > 0 && (
-                             <div className="px-2 py-0.5 bg-rose-500/20 text-rose-400 rounded text-xs font-bold uppercase flex items-center gap-1 shadow-lg shadow-rose-500/20">
-                               <ThumbsUp size={12} /> {activeTask.fights.length} FIGHTs!
-                             </div>
-                           )}
-                        </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-xs font-semibold text-indigo-600 flex items-center gap-1.5">
+                          <Clock size={14} />
+                          {activeTask.status === 'doing' ? '集中中のタスク' : '一時中断中'}
+                        </p>
+                        <h2 className="text-lg font-bold text-slate-900 truncate">{activeTask.title}</h2>
+                        <span className="inline-block text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                          {activeTask.category}
+                        </span>
                       </div>
-
-                      <div className="flex flex-col items-center">
-                        <div className="text-4xl sm:text-5xl font-mono font-black tracking-widest tabular-nums">
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-3xl font-mono font-bold text-slate-900 tabular-nums">
                           {Math.floor(timerSeconds / 60)}:{String(timerSeconds % 60).padStart(2, '0')}
                         </div>
-                        <div className="flex gap-4 mt-4">
+                        <div className="flex gap-2">
                           {activeTask.status === 'doing' ? (
                             <button 
                               onClick={() => setShowRescueModal(true)}
-                              className="bg-white/10 hover:bg-white/20 p-3 rounded-2xl transition-all"
-                              title="一時中断（救済ステータス）"
+                              className="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-700 transition-all"
+                              title="一時中断"
                             >
-                              <Pause size={24} />
+                              <Pause size={20} />
                             </button>
                           ) : (
                             <button 
                                onClick={() => resumeTask(activeTask.id)}
-                               className="bg-indigo-500 hover:bg-indigo-600 p-3 rounded-2xl transition-all border border-indigo-400"
+                               className="p-2.5 bg-indigo-600 hover:bg-indigo-700 rounded-xl text-white transition-all"
                                title="再開"
                             >
-                              <Play size={24} fill="currentColor" />
+                              <Play size={20} fill="currentColor" />
                             </button>
                           )}
                           <button 
                             onClick={() => completeTask(activeTask.id)}
-                            className="bg-green-500 hover:bg-green-600 p-3 rounded-2xl transition-all shadow-lg shadow-green-500/40"
+                            className="p-2.5 bg-emerald-600 hover:bg-emerald-700 rounded-xl text-white transition-all"
+                            title="完了"
                           >
-                            <CheckCircle2 size={24} />
+                            <CheckCircle2 size={20} />
                           </button>
                         </div>
                       </div>
                     </div>
-
-                    <div className="mt-8 h-3 w-full bg-slate-800 rounded-full overflow-hidden">
+                    <div className="mt-4 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                       <motion.div 
                         initial={{ width: '100%' }}
                         animate={{ width: `${(timerSeconds / ((activeTask.estimatedMinutes || 60) * 60)) * 100}%` }}
                         className={cn(
                           "h-full transition-colors duration-500",
-                          timerSeconds < 300 ? "bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : 
-                          timerSeconds < 900 ? "bg-yellow-500" : "bg-green-500"
+                          timerSeconds < 300 ? "bg-red-500" : 
+                          timerSeconds < 900 ? "bg-amber-500" : "bg-emerald-500"
                         )}
                       />
-                    </div>
-
-                    <div className="mt-4 flex justify-between text-xs font-bold text-slate-500 uppercase tracking-widest">
-                      <span>集中ステータス有効</span>
-                      <button onClick={() => setShowRescueModal(true)} className="hover:text-white transition-colors">中断理由を編集</button>
                     </div>
                   </motion.div>
                 )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-2 space-y-6">
-                      <div className="flex flex-col gap-4 px-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex gap-4 sm:gap-6 shrink-0">
-                           <button 
-                            onClick={() => setShowCompleted(false)}
-                            className={cn(
-                              "text-sm sm:text-lg font-black transition-all pb-2 px-1 relative whitespace-nowrap",
-                              !showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
-                            )}
-                           >
-                             マイタスク ({currentUserTasks.filter(t => t.status !== 'done' && !t.parentId).length})
-                             {!showCompleted && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-full" />}
-                           </button>
-                           <button 
-                            onClick={() => setShowCompleted(true)}
-                            className={cn(
-                              "text-sm sm:text-lg font-black transition-all pb-2 px-1 relative whitespace-nowrap",
-                              showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
-                            )}
-                           >
-                             完了済み ({currentUserTasks.filter(t => t.status === 'done').length})
-                             {showCompleted && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-full" />}
-                           </button>
-                          </div>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">タスク一覧</h2>
+                    <p className="text-sm text-slate-500 mt-0.5">
+                      {showCompleted ? `完了 ${completedTaskCount} 件` : `未完了 ${pendingTaskCount} 件`}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                    <span className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-slate-600">
+                      未完了 {pendingTaskCount}
+                    </span>
+                    <span className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-slate-600">
+                      完了 {completedTaskCount}
+                    </span>
+                    {userProfile.currentStreak > 0 && (
+                      <span className="px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-full text-amber-800">
+                        🔥 {userProfile.currentStreak}日
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-                          <button 
-                            onClick={() => setShowAiModal(true)}
-                            className="flex items-center gap-1.5 text-indigo-400 bg-white/10 hover:bg-white/20 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold transition-all border border-white/10 shrink-0"
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="flex border-b border-slate-100">
+                    <button 
+                      onClick={() => setShowCompleted(false)}
+                      className={cn(
+                        "flex-1 py-3.5 text-sm font-semibold transition-colors border-b-2",
+                        !showCompleted 
+                          ? "text-indigo-600 border-indigo-600 bg-indigo-50/50" 
+                          : "text-slate-500 border-transparent hover:text-slate-700"
+                      )}
+                    >
+                      未完了 ({pendingTaskCount})
+                    </button>
+                    <button 
+                      onClick={() => setShowCompleted(true)}
+                      className={cn(
+                        "flex-1 py-3.5 text-sm font-semibold transition-colors border-b-2",
+                        showCompleted 
+                          ? "text-indigo-600 border-indigo-600 bg-indigo-50/50" 
+                          : "text-slate-500 border-transparent hover:text-slate-700"
+                      )}
+                    >
+                      完了 ({completedTaskCount})
+                    </button>
+                  </div>
+
+                  {!showCompleted && (
+                    <div className="px-4 pt-3 pb-1 flex items-center gap-2 overflow-x-auto scrollbar-hide border-b border-slate-50">
+                      {['すべて', ...availableCategories].map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setSelectedCategory(cat)}
+                          className={cn(
+                            "whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0",
+                            selectedCategory === cat 
+                              ? "bg-indigo-600 text-white" 
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          )}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="p-4 space-y-8">
+                    <AnimatePresence mode="popLayout">
+                      {(Object.entries(groupedTasks) as [string, Task[]][]).map(([dateLabel, dateTasks]) => {
+                        const filtered = dateTasks.filter(t => selectedCategory === 'すべて' || t.category === selectedCategory);
+                        if (filtered.length === 0) return null;
+                        return (
+                          <motion.section 
+                            key={dateLabel}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-3"
                           >
-                            <Sparkles size={14} />
-                            <span>AI提案</span>
-                          </button>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 overflow-x-auto w-full scrollbar-hide -mx-1 px-1">
-                           {['すべて', ...availableCategories].map(cat => (
-                             <button
-                               key={cat}
-                               onClick={() => setSelectedCategory(cat)}
-                               className={cn(
-                                 "whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all shrink-0",
-                                 selectedCategory === cat 
-                                   ? "bg-white text-indigo-600 shadow-lg" 
-                                   : "bg-white/10 text-white/60 hover:bg-white/20"
-                               )}
-                             >
-                               {cat}
-                             </button>
-                           ))}
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-12">
-                        <AnimatePresence mode="popLayout">
-                          {(Object.entries(groupedTasks) as [string, Task[]][]).map(([dateLabel, dateTasks]) => (
-                            <motion.div 
-                              key={dateLabel}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className="space-y-4"
+                            <div className="flex items-center gap-2 text-slate-500">
+                              <CalendarIcon size={15} />
+                              <h3 className="text-xs font-bold uppercase tracking-wide">{dateLabel}</h3>
+                              <span className="text-xs text-slate-400">({filtered.length})</span>
+                            </div>
+                            <ul className="space-y-2 list-none">
+                              {filtered.map(task => (
+                                <li key={task.id}>
+                                  <TaskCard 
+                                    task={task} 
+                                    disabled={isLocked && activeTaskId !== task.id}
+                                    onStart={startTask}
+                                    onEdit={handleEditTask}
+                                    onAddSubtask={handleAddSubtask}
+                                    isLocked={isLocked && activeTaskId === task.id}
+                                    allTasks={tasks}
+                                    onImageClick={(url) => setPreviewImage(url)}
+                                    expansionSignals={expansionSignals}
+                                    isExpanded={expandedTaskId === task.id}
+                                    onToggleExpand={handleToggleExpand}
+                                    lastCreatedTaskId={lastCreatedTaskId}
+                                  />
+                                </li>
+                              ))}
+                            </ul>
+                          </motion.section>
+                        );
+                      })}
+                    </AnimatePresence>
+
+                    {currentUserTasks.filter(t => showCompleted ? (t.status === 'done') : (t.status !== 'done' && !t.parentId)).length === 0 && (
+                      <div className="py-16 text-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50">
+                        {showCompleted ? (
+                          <>
+                            <CheckCircle2 className="mx-auto text-slate-300 mb-3" size={40} />
+                            <p className="text-slate-600 font-semibold">完了したタスクはまだありません</p>
+                          </>
+                        ) : (
+                          <div className="space-y-4 max-w-xs mx-auto px-4">
+                            <p className="text-slate-700 font-semibold">タスクがありません</p>
+                            <p className="text-sm text-slate-500 leading-relaxed">
+                              右上の「＋」から、今日やることを追加しましょう。
+                            </p>
+                            <button 
+                              onClick={() => setShowTaskForm(true)}
+                              className="w-full px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold transition-all active:scale-95"
                             >
-                              <div className="flex items-center gap-3 px-2 border-b border-white/10 pb-2">
-                                <CalendarIcon size={16} className={theme === 'minimal' ? "text-slate-400" : "text-white/40"} />
-                                <h4 className={cn("text-sm font-black uppercase tracking-widest", theme === 'minimal' ? "text-slate-600" : "text-white")}>{dateLabel}</h4>
-                              </div>
-                              <div className="grid grid-cols-1 gap-3">
-                                {dateTasks
-                                  .filter(t => selectedCategory === 'すべて' || t.category === selectedCategory)
-                                  .map(task => (
-                                    <TaskCard 
-                                      key={task.id} 
-                                      task={task} 
-                                      disabled={isLocked && activeTaskId !== task.id}
-                                      onStart={startTask}
-                                      onEdit={handleEditTask}
-                                      onAddSubtask={handleAddSubtask}
-                                      isLocked={isLocked && activeTaskId === task.id}
-                                      allTasks={tasks}
-                                      onImageClick={(url) => setPreviewImage(url)}
-                                      expansionSignals={expansionSignals}
-                                      isExpanded={expandedTaskId === task.id}
-                                      onToggleExpand={handleToggleExpand}
-                                      lastCreatedTaskId={lastCreatedTaskId}
-                                    />
-                                  ))
-                                }
-                              </div>
-                            </motion.div>
-                          ))}
-                        </AnimatePresence>
-                        {currentUserTasks.filter(t => showCompleted ? (t.status === 'done') : (t.status !== 'done' && !t.parentId)).length === 0 && (
-                          <div className="py-20 text-center bg-white/5 rounded-[40px] border-2 border-dashed border-white/20">
-                            {showCompleted ? (
-                              <>
-                                <CheckCircle2 className="mx-auto text-white/40 mb-4" size={40} />
-                                <p className="text-white font-black">まだ完了したタスクはありません</p>
-                              </>
-                            ) : (
-                              <div className="space-y-4 max-w-sm mx-auto p-4">
-                                <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-500/20">
-                                  <Sparkles className="text-indigo-400" size={32} />
-                                </div>
-                                <h3 className="text-xl font-black text-white">タスクがありません</h3>
-                                <p className="text-sm font-medium text-slate-300 leading-relaxed">
-                                  右上の「タスク追加」ボタンから、今日やるべきことを書き出してみましょう。チームに見守られながら集中して取り組めます。
-                                </p>
-                                <button 
-                                  onClick={() => setShowTaskForm(true)}
-                                  className="mt-4 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold transition-all active:scale-95 shadow-xl shadow-indigo-500/30 w-full"
-                                >
-                                  最初のタスクを作成する
-                                </button>
-                              </div>
-                            )}
+                              タスクを追加
+                            </button>
                           </div>
                         )}
                       </div>
-                    </div>
+                    )}
 
-                  <div className="space-y-6">
-                    <div className="bg-white/80 backdrop-blur shadow-sm rounded-3xl p-6 border border-white/50">
-                      <h3 className="text-sm font-bold uppercase text-slate-400 tracking-widest mb-4">継続ステータス</h3>
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-4 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                           <div className="text-2xl">🔥</div>
-                           <div>
-                             <div className="text-sm font-bold">{userProfile.currentStreak}日連続達成</div>
-                             <div className="text-xs text-slate-500">自己ベスト更新まであと3日</div>
-                           </div>
-                        </div>
-                        <div className="flex items-center gap-4 p-4 bg-rose-50 rounded-2xl border border-rose-100">
-                           <div className="text-2xl text-rose-500"><ThumbsUp size={20} fill="currentColor" /></div>
-                           <div>
-                             <div className="text-sm font-bold">{userProfile.fightCount || 0} Fight 受信</div>
-                             <div className="text-xs text-slate-500">チームから応援されています！</div>
-                           </div>
-                        </div>
+                    {!showCompleted && pendingTaskCount > 0 && (Object.entries(groupedTasks) as [string, Task[]][]).every(([, tasks]) => 
+                      tasks.filter(t => selectedCategory === 'すべて' || t.category === selectedCategory).length === 0
+                    ) && (
+                      <div className="py-12 text-center text-sm text-slate-500">
+                        このカテゴリのタスクはありません
                       </div>
-                    </div>
-
-                    <div className="bg-white/80 backdrop-blur shadow-sm rounded-3xl p-6 border border-white/50">
-                      <h3 className="text-sm font-bold uppercase text-slate-400 tracking-widest mb-4">類似検索</h3>
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input 
-                          type="text" 
-                          placeholder="タスク名、タグ、カテゴリ..." 
-                          className="w-full bg-slate-100 border-none rounded-xl pl-10 text-sm py-3 focus:ring-2 focus:ring-indigo-500 transition-all"
-                          value={similarSearchQuery}
-                          onChange={e => setSimilarSearchQuery(e.target.value)}
-                        />
-                      </div>
-                      
-                      {similarSearchQuery ? (
-                        <div className="mt-4 space-y-2">
-                             {allSearchableTasks.filter(t => t.title.toLowerCase().includes(similarSearchQuery.toLowerCase())).length > 0 ? (
-                               allSearchableTasks.filter(t => t.title.toLowerCase().includes(similarSearchQuery.toLowerCase())).slice(0, 5).map(st => (
-                                 <div key={st.id} className="group p-3 text-xs bg-white rounded-xl border border-slate-100 font-bold text-slate-600 transition-all hover:border-indigo-300">
-                                   <div className="flex justify-between items-start gap-2">
-                                     <div className="flex flex-col">
-                                        <span className="truncate">{st.title}</span>
-                                        {st.userId !== userProfile.id && (
-                                          <span className="text-[8px] text-indigo-400 font-black">Member: {members.find(m => m.id === st.userId)?.displayName}</span>
-                                        )}
-                                     </div>
-                                     <span className="opacity-50 text-[9px] whitespace-nowrap">{st.category}</span>
-                                   </div>
-                                   <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button 
-                                        onClick={() => {
-                                          if (st.userId === userProfile.id) {
-                                            handleEditTask(st);
-                                          } else {
-                                            setSelectedMemberId(st.userId);
-                                            setShowMemberDetail(true);
-                                          }
-                                        }}
-                                        className="text-[9px] text-indigo-500 font-black flex items-center gap-1"
-                                      >
-                                        <Settings size={10} /> 詳細
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          setActiveTab('messages');
-                                        }}
-                                        className="text-[9px] text-indigo-500 font-black flex items-center gap-1"
-                                      >
-                                        <MessageSquare size={10} /> 相談
-                                      </button>
-                                   </div>
-                                 </div>
-                               ))
-                             ) : (
-                               <div className="py-4 text-center text-[10px] text-slate-400 font-bold">見つかりませんでした</div>
-                             )}
-                          </div>
-                      ) : (
-                        <div className="mt-4">
-                           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">よく検索される言葉</div>
-                           <div className="flex flex-wrap gap-2">
-                              {['ES', '自己分析', '企業研究'].map(kw => (
-                                <button 
-                                  key={kw} 
-                                  onClick={() => setSimilarSearchQuery(kw)}
-                                  className="px-2.5 py-1 bg-white border border-slate-100 rounded-lg text-[10px] font-bold text-slate-500 hover:border-indigo-300 transition-colors"
-                                >
-                                  {kw}
-                                </button>
-                              ))}
-                           </div>
-                        </div>
-                      )}
-                    </div>
+                    )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
 
             {activeTab === 'calendar' && (
@@ -1319,7 +1171,7 @@ export default function App() {
 
             {activeTab === 'members' && (
                <div className="max-w-3xl mx-auto space-y-6">
-                  <h2 className="text-2xl font-black mb-6 px-2">チームメンバーの進捗</h2>
+                  <h2 className="text-xl font-bold text-slate-900 mb-4">チームメンバー</h2>
                   <div className="space-y-4 px-2">
                     {memberProgress.map((progressItem, idx) => (
                         <div key={idx} className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
@@ -1387,82 +1239,40 @@ export default function App() {
             )}
 
             {activeTab === 'settings' && (
-              <div className="max-w-2xl mx-auto bg-white rounded-3xl shadow-sm p-4 sm:p-8 border border-slate-100 space-y-8">
-                 <h2 className="text-2xl font-black">個人設定</h2>
+              <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm p-4 sm:p-8 border border-slate-200 space-y-8">
+                 <h2 className="text-xl font-bold text-slate-900">設定</h2>
                  <div className="space-y-6">
-                    <div className="space-y-3">
-                       <label className="text-sm font-bold text-slate-600 block">背景画像のカスタマイズ</label>
-                       <div className="flex gap-4">
-                          <input 
-                            type="text" 
-                            placeholder="画像URLを入力..."
-                            className="flex-1 bg-slate-100 border-none rounded-xl text-sm px-4 py-3 focus:ring-2 focus:ring-indigo-500"
-                            value={userProfile.backgroundImageUrl}
-                            onChange={(e) => setUserProfile({...userProfile, backgroundImageUrl: e.target.value})}
-                          />
-                       </div>
-                    </div>
-
-                    {/* User Info Update */}
-                    <div className="pt-6 border-t border-slate-100">
-                       <label className="text-sm font-bold text-slate-600 block mb-4">プロフィール設定</label>
-                       <div className="space-y-6">
-                          <div className="flex flex-col gap-2">
-                             <span className="text-[10px] font-black uppercase text-slate-400">表示名</span>
+                    <div>
+                       <label className="text-sm font-semibold text-slate-700 block mb-4">プロフィール</label>
+                       <div className="space-y-4">
+                          <div className="flex flex-col gap-1.5">
+                             <span className="text-xs font-medium text-slate-500">表示名</span>
                              <input 
                                 type="text"
                                 value={userProfile.displayName}
                                 onChange={(e) => setUserProfile({...userProfile, displayName: e.target.value})}
-                                className="bg-slate-50 border-none rounded-xl text-sm px-4 py-3 focus:ring-2 focus:ring-indigo-500"
+                                className="bg-slate-50 border border-slate-200 rounded-xl text-sm px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 outline-none"
                              />
                           </div>
-                          <div className="flex flex-col gap-4">
-                             <div className="flex flex-col gap-2">
-                                <span className="text-[10px] font-black uppercase text-slate-400">プロフィールアイコン</span>
-                                <div className="flex gap-4 items-center">
-                                   <div className="w-20 h-20 rounded-[28px] bg-slate-100 shrink-0 overflow-hidden border border-slate-200">
-                                      <img src={userProfile.avatarUrl || userProfile.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
-                                   </div>
-                                   <div className="flex-1 space-y-2">
-                                      <button 
-                                        onClick={() => document.getElementById('avatar-upload')?.click()}
-                                        className="w-full py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-md"
-                                      >
-                                        写真を選択
-                                      </button>
-                                      <input 
-                                        id="avatar-upload"
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) {
-                                            const reader = new FileReader();
-                                            reader.onload = (ev) => setUserProfile({...userProfile, avatarUrl: ev.target?.result as string});
-                                            reader.readAsDataURL(file);
-                                          }
-                                        }}
-                                      />
-                                      <div className="text-[9px] text-slate-400 font-medium">※写真は端末から選択できます</div>
-                                   </div>
+                          <div className="flex flex-col gap-2">
+                             <span className="text-xs font-medium text-slate-500">アイコン</span>
+                             <div className="flex gap-4 items-center">
+                                <div className="w-16 h-16 rounded-2xl bg-indigo-50 shrink-0 overflow-hidden border border-slate-200 flex items-center justify-center text-lg font-bold text-indigo-700">
+                                   {userProfile.avatarUrl ? (
+                                     <img src={userProfile.avatarUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                                   ) : (
+                                     userProfile.displayName.charAt(0).toUpperCase()
+                                   )}
                                 </div>
-                             </div>
-
-                             <div className="flex flex-col gap-2">
-                                <span className="text-[10px] font-black uppercase text-slate-400">背景画像</span>
-                                <div className="space-y-3">
-                                   <div className="relative h-32 w-full rounded-3xl overflow-hidden border border-slate-200 bg-slate-100">
-                                      <img src={userProfile.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
-                                      <button 
-                                        onClick={() => document.getElementById('bg-upload')?.click()}
-                                        className="absolute bottom-3 right-3 p-2 bg-white/80 backdrop-blur text-slate-600 rounded-xl hover:bg-white transition-all shadow-lg"
-                                      >
-                                        <Camera size={18} />
-                                      </button>
-                                   </div>
+                                <div className="flex-1">
+                                   <button 
+                                     onClick={() => document.getElementById('avatar-upload')?.click()}
+                                     className="w-full py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-all"
+                                   >
+                                     写真を変更
+                                   </button>
                                    <input 
-                                     id="bg-upload"
+                                     id="avatar-upload"
                                      type="file"
                                      accept="image/*"
                                      className="hidden"
@@ -1470,12 +1280,11 @@ export default function App() {
                                        const file = e.target.files?.[0];
                                        if (file) {
                                          const reader = new FileReader();
-                                         reader.onload = (ev) => setUserProfile({...userProfile, backgroundImageUrl: ev.target?.result as string});
+                                         reader.onload = (ev) => setUserProfile({...userProfile, avatarUrl: ev.target?.result as string});
                                          reader.readAsDataURL(file);
                                        }
                                      }}
                                    />
-                                   <div className="text-[9px] text-slate-400 font-medium text-center">※背景はお好みの写真に変更可能です</div>
                                 </div>
                              </div>
                           </div>
@@ -1529,38 +1338,18 @@ export default function App() {
                        </div>
                     </div>
 
+                    {userProfile.badges.length > 0 && (
                     <div className="pt-6 border-t border-slate-100">
-                       <label className="text-sm font-bold text-slate-600 block mb-4">テーマ設定</label>
-                       <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-                          {(['default', 'ocean', 'forest', 'sunset', 'minimal'] as AppTheme[]).map(t => (
-                            <button 
-                              key={t}
-                              onClick={() => setTheme(t)}
-                              className={cn(
-                                "flex flex-col items-center gap-2 group",
-                                theme === t ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"
-                              )}
-                            >
-                              <div className={cn(
-                                "w-10 h-10 rounded-full border-4 shadow-sm transition-all",
-                                t === 'default' ? "bg-slate-800" : t === 'ocean' ? "bg-blue-600" : t === 'forest' ? "bg-emerald-600" : t === 'sunset' ? "bg-rose-600" : "bg-white",
-                                theme === t ? "border-indigo-500" : "border-white group-hover:border-slate-100"
-                              )}></div>
-                              <span className="text-[9px] font-black uppercase tracking-tighter">{t}</span>
-                            </button>
-                          ))}
-                       </div>
-                    </div>
-
-                    <div className="pt-6 border-t border-slate-100">
+                       <label className="text-sm font-semibold text-slate-700 block mb-3">バッジ</label>
                        <div className="flex flex-wrap gap-2">
                           {userProfile.badges.map(b => (
-                            <span key={b} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-100">
-                               ✨ {b}
+                            <span key={b} className="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-lg border border-indigo-100">
+                               {b}
                             </span>
                           ))}
                        </div>
                     </div>
+                    )}
 
                     <div className="pt-6 border-t border-slate-100 text-center">
                        <button onClick={handleLogout} className="px-6 py-3 bg-red-50 text-red-600 text-sm font-bold rounded-2xl hover:bg-red-100 transition-all">ログアウト</button>
@@ -1593,7 +1382,6 @@ export default function App() {
              onConfirm={(url) => finalizeStartTask(pendingStartTaskId, url)}
            />
         )}
-        {showAiModal && <AiProposalModal onClose={() => setShowAiModal(false)} onSubmit={(task) => setTasks([task, ...tasks])} />}
         {showRescueModal && activeTaskId && (
            <RescueModal 
               onClose={() => setShowRescueModal(false)}
@@ -1694,57 +1482,50 @@ function LoginScreen({ onLogin }: { onLogin: (email: string) => void }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/40 via-purple-900/40 to-slate-950"></div>
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/20 blur-[120px] rounded-full"></div>
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/20 blur-[120px] rounded-full"></div>
-      
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
       <motion.div 
-        initial={{ y: 20, opacity: 0 }}
+        initial={{ y: 16, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        className="w-full max-w-md relative z-10 space-y-8 text-center"
+        className="w-full max-w-md space-y-8 text-center"
       >
-        <div className="space-y-4">
-          <div className="inline-flex items-center justify-center p-4 bg-indigo-500/20 rounded-3xl border border-indigo-500/30 mb-2 shadow-lg shadow-indigo-500/20">
-            <Sparkles size={48} className="text-indigo-400" />
+        <div className="space-y-3">
+          <div className="inline-flex items-center justify-center p-3 bg-indigo-50 rounded-2xl border border-indigo-100">
+            <Sparkles size={36} className="text-indigo-600" />
           </div>
-          <h1 className="text-5xl md:text-6xl font-black text-white tracking-tight drop-shadow-md">
-            Sync<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Task</span>
+          <h1 className="text-4xl font-bold text-slate-900 tracking-tight">
+            Sync<span className="text-indigo-600">Task</span>
           </h1>
-          <p className="text-slate-300 font-bold text-lg md:text-xl max-w-sm mx-auto leading-relaxed">互いにプレッシャーをかけて、<br/>意識と生産性を高め合おう。</p>
+          <p className="text-slate-500 text-sm max-w-xs mx-auto leading-relaxed">
+            シンプルなタスク管理で、チームと一緒に集中しましょう。
+          </p>
         </div>
 
-        <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] p-8 space-y-6 shadow-2xl">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-5 shadow-sm text-left">
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2 text-left">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">メールアドレス</label>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-600">メールアドレス</label>
               <input 
                 type="email"
                 placeholder="example@email.com"
-                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3.5 px-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-300 transition-all"
                 value={email}
                 onChange={e => { setEmail(e.target.value); setError(''); }}
               />
-              {error && <p className="text-rose-400 text-[10px] font-bold pl-2">{error}</p>}
+              {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
             </div>
 
-            <div className="flex flex-col gap-3">
-              <button 
-                type="submit"
-                className="w-full flex items-center justify-center gap-3 bg-indigo-600 text-white py-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all active:scale-95 shadow-xl border border-indigo-500"
-              >
-                ログイン
-              </button>
-              
-            </div>
+            <button 
+              type="submit"
+              className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-semibold hover:bg-indigo-700 transition-all active:scale-[0.98]"
+            >
+              ログイン
+            </button>
           </form>
 
-          <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-[10px] text-indigo-300 font-bold leading-relaxed">
-             💡 メールアドレスを入力するだけでログインできます。未登録の場合は自動的に新規登録されます。
-          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            メールアドレスだけでログインできます。未登録の場合は自動でアカウントが作成されます。
+          </p>
         </div>
-
-        <p className="text-xs text-slate-500 pt-8">続行することで、利用規約およびゲーミフィケーション・ルールに同意したことになります。</p>
       </motion.div>
     </div>
   );
@@ -1784,7 +1565,7 @@ function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, 
         </div>
 
         <nav className="flex-1 space-y-2">
-          <SidebarItem icon={<LayoutDashboard size={20} />} label="ダッシュボード" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); onClose(); }} />
+          <SidebarItem icon={<LayoutDashboard size={20} />} label="ホーム" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); onClose(); }} />
           <SidebarItem icon={<User size={20} />} label="メンバー進捗" active={activeTab === 'members'} onClick={() => { setActiveTab('members'); onClose(); }} />
           <SidebarItem icon={<CalendarIcon size={20} />} label="記録・カレンダー" active={activeTab === 'calendar'} onClick={() => { setActiveTab('calendar'); onClose(); }} />
           <SidebarItem icon={<MessageSquare size={20} />} label="メッセージ" active={activeTab === 'messages'} onClick={() => { setActiveTab('messages'); onClose(); }} />
@@ -1972,55 +1753,33 @@ function TaskCard({
         opacity: { duration: 0.2 }
       }}
       className={cn(
-        "group relative bg-white/95 backdrop-blur rounded-2xl border border-slate-200 hover:shadow-md cursor-pointer overflow-hidden",
+        "group relative bg-white rounded-xl border border-slate-200 hover:border-indigo-200 hover:shadow-sm cursor-pointer overflow-hidden transition-all",
         disabled && "opacity-40 grayscale pointer-events-none",
-        isNew && "ring-ring ring-2 ring-indigo-500/50"
+        isLocked && "ring-2 ring-indigo-400 border-indigo-300",
+        isNew && "ring-2 ring-indigo-400/60"
       )}
       onClick={toggleExpand}
     >
-      <div className="flex items-stretch min-h-[60px]">
-        {/* Priority Strip */}
-        <div className={cn("w-1.5 shrink-0", priorityColors[task.priority])} />
-        
-        {/* Full-height Photo Strip */}
-        {task.startPhoto && (
-          <div 
-            className="w-16 sm:w-20 shrink-0 cursor-zoom-in border-r border-slate-100 relative group overflow-hidden"
-            onClick={(e) => {
-              e.stopPropagation();
-              onImageClick?.(task.startPhoto!);
-            }}
-            title="タスク開始時の写真"
-          >
-            <img src={task.startPhoto} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="Start" />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-              <Search className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" size={16} />
-            </div>
-          </div>
-        )}
+      <div className="flex items-stretch min-h-[56px]">
+        <div className={cn("w-1 shrink-0", priorityColors[task.priority])} />
 
-        {/* Main content - Row layout */}
-        <div className="flex-1 flex items-center py-2 px-3 gap-3 min-w-0">
-          {/* Status/Check - optional visually */}
+        <div className="flex-1 flex items-center py-3 px-4 gap-3 min-w-0">
           <div className="shrink-0">
             {task.status === 'done' ? (
-              <CheckCircle2 size={18} className="text-emerald-500" />
+              <CheckCircle2 size={20} className="text-emerald-500" />
             ) : (
-              <div className={cn("w-4 h-4 rounded-full border-2", priorityBorders[task.priority])} />
+              <div className={cn("w-5 h-5 rounded-full border-2", priorityBorders[task.priority])} />
             )}
           </div>
 
-          {/* Title & Info */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-0.5">
-               <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider bg-slate-50 px-1 py-0.5 rounded leading-none shrink-0">{task.category}</span>
-               <h4 className={cn(
-                 "font-bold text-slate-800 leading-tight truncate",
-                 depth === 0 ? "text-sm" : "text-xs"
-               )}>{task.title}</h4>
-            </div>
-            
-            <div className="flex items-center gap-2 text-[8px] font-bold text-slate-400">
+            <h4 className={cn(
+              "font-semibold text-slate-900 leading-snug",
+              depth === 0 ? "text-base" : "text-sm",
+              task.status === 'done' && "line-through text-slate-400"
+            )}>{task.title}</h4>
+            <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
+               <span className="font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{task.category}</span>
                <span className="flex items-center gap-0.5"><Clock size={9} /> {task.estimatedMinutes}分</span>
                {task.attachments.length > 0 && (
                  <span className="flex items-center gap-0.5 text-indigo-400">
@@ -2050,32 +1809,23 @@ function TaskCard({
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-1 shrink-0 ml-auto" onClick={e => e.stopPropagation()}>
-            {!disabled && (
-              <button 
-                onClick={() => onAddSubtask(task.id)}
-                className="w-7 h-7 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-all opacity-0 group-hover:opacity-100"
-                title="サブタスク追加"
-              >
-                <Plus size={14} />
-              </button>
-            )}
+          <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
             <button 
               onClick={() => onEdit(task)}
-              className="w-7 h-7 flex items-center justify-center text-slate-300 hover:text-slate-600 transition-all"
+              className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all"
               title="編集"
             >
-              <Settings size={14} />
+              <Settings size={16} />
             </button>
             {!disabled && task.status === 'todo' && (
               <button 
                 disabled={hasIncompleteSubtasks}
                 onClick={() => onStart(task.id)}
-                className="w-8 h-8 flex items-center justify-center bg-indigo-600 text-white rounded-xl shadow-lg hover:scale-105 active:scale-95 transition-all disabled:bg-slate-200 disabled:shadow-none"
+                className="h-9 px-3 flex items-center justify-center gap-1 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 active:scale-95 transition-all disabled:bg-slate-200 disabled:text-slate-400"
                 title="開始"
               >
                 <Play size={14} fill="currentColor" />
+                開始
               </button>
             )}
           </div>
@@ -2618,156 +2368,6 @@ function MemberDetailModal({ member, tasks, onClose, onImageClick, expansionSign
   );
 }
 
-interface AiProposalModalProps {
-  onClose: () => void;
-  onSubmit: (task: Task) => void;
-}
-
-function AiProposalModal({ onClose, onSubmit }: AiProposalModalProps) {
-  const [messages, setMessages] = useState<{ role: 'ai' | 'user', text: string, options?: Task[] }[]>([
-    { role: 'ai', text: 'こんにちは！現在の悩み事や、次に何をすべきか相談に乗ります。何かお手伝いできることはありますか？' }
-  ]);
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [userMsgCount, setUserMsgCount] = useState(0);
-
-  const handleSend = () => {
-    if (!input.trim()) return;
-    const userMsg = { role: 'user' as const, text: input };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setIsTyping(true);
-    const newCount = userMsgCount + 1;
-    setUserMsgCount(newCount);
-
-    // Simulate AI response
-    setTimeout(() => {
-      let aiText = "";
-      let options: Task[] | undefined = undefined;
-
-      if (newCount < 2) {
-        aiText = "なるほど。それについてもう少し詳しく聞かせてください。具体的にどの部分で困っていますか？";
-      } else if (newCount === 2) {
-        aiText = "ありがとうございます。状況がよくわかりました。あなたの最近の傾向も踏まえると、集中力が高まっている今、以下のタスクを片付けるのが良さそうです。";
-        options = [
-          {
-            id: Math.random().toString(36).substr(2, 9),
-            userId: 'user_1',
-            assignedBy: 'AIアシスタント',
-            parentId: null,
-            title: '集中してESの核を作る',
-            description: '最も重要な項目にフォーカスしましょう。',
-            priority: 'high',
-            category: 'AI提案',
-            estimatedMinutes: 45,
-            actualMinutes: 0,
-            status: 'todo',
-            mismatchReason: '',
-            attachments: [],
-            dueDate: new Date(),
-            updatedAt: new Date()
-          },
-          {
-            id: Math.random().toString(36).substr(2, 9),
-            userId: 'user_1',
-            assignedBy: 'AIアシスタント',
-            parentId: null,
-            title: '関連資料のクイック整理',
-            description: '15分で終わる簡単な準備運動です。',
-            priority: 'medium',
-            category: 'AI提案',
-            estimatedMinutes: 15,
-            actualMinutes: 0,
-            status: 'todo',
-            mismatchReason: '',
-            attachments: [],
-            dueDate: new Date(),
-            updatedAt: new Date()
-          }
-        ];
-      } else {
-        aiText = "承知しました。さらなる最適化も可能です。まずは提案したタスクを確認してみてください。";
-      }
-
-      setMessages(prev => [...prev, { role: 'ai', text: aiText, options }]);
-      setIsTyping(false);
-    }, 1500);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md" onClick={onClose}>
-      <motion.div 
-        initial={{ y: 50, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 50, opacity: 0 }}
-        onClick={e => e.stopPropagation()}
-        className="bg-white w-full max-w-2xl h-[80vh] rounded-[48px] shadow-2xl flex flex-col overflow-hidden"
-      >
-        <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-           <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-600 text-white rounded-2xl flex items-center justify-center">
-                 <Sparkles size={20} />
-              </div>
-              <h2 className="font-black">AIタスクコンシェルジュ</h2>
-           </div>
-           <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-xl transition-all"><X size={20} /></button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-8 space-y-6 scrollbar-hide">
-           {messages.map((m, i) => (
-              <div key={i} className={cn("flex", m.role === 'user' ? "justify-end" : "justify-start")}>
-                 <div className={cn(
-                    "max-w-[80%] p-5 rounded-3xl",
-                    m.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-slate-100 text-slate-800 rounded-tl-none font-medium"
-                 )}>
-                    <div className="text-sm leading-relaxed">{m.text}</div>
-                    {m.options && (
-                       <div className="mt-4 space-y-2">
-                          {m.options.map(opt => (
-                             <button 
-                                key={opt.id}
-                                onClick={() => {
-                                  onSubmit(opt);
-                                  onClose();
-                                }}
-                                className="w-full p-4 bg-white hover:bg-indigo-50 rounded-2xl border border-slate-200 text-left transition-all group"
-                             >
-                                <div className="text-xs font-black text-indigo-600 mb-1">{opt.priority === 'high' ? 'おすすめ' : 'すぐに完了'}</div>
-                                <div className="text-sm font-bold text-slate-800 group-hover:text-indigo-700">{opt.title}</div>
-                                <div className="text-[10px] text-slate-400 mt-1">{opt.estimatedMinutes}分 / {opt.category}</div>
-                             </button>
-                          ))}
-                       </div>
-                    )}
-                 </div>
-              </div>
-           ))}
-           {isTyping && <div className="text-xs text-slate-400 font-bold animate-pulse">AIが思考中...</div>}
-        </div>
-
-        <div className="p-6 bg-slate-50 border-t border-slate-100">
-           <div className="flex gap-2">
-              <input 
-                type="text" 
-                className="flex-1 bg-white border border-slate-200 rounded-2xl px-6 py-4 outline-none focus:ring-4 focus:ring-indigo-100 text-sm font-medium"
-                placeholder="悩み事を入力してください..."
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-              />
-              <button 
-                onClick={handleSend}
-                className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all"
-              >
-                 <MessageSquare size={20} fill="currentColor" />
-              </button>
-           </div>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
 interface GapAnalysisModalProps {
   task: Task;
   onClose: () => void;
@@ -3004,10 +2604,10 @@ function CalendarView({ tasks, onDayClick }: { tasks: Task[], onDayClick: (date:
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl sm:text-2xl font-black text-white">{format(currentDate, 'yyyy年 M月')}</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-900">{format(currentDate, 'yyyy年 M月')}</h2>
         <div className="flex gap-2 self-start sm:self-auto">
-           <button onClick={prevMonth} className="px-4 py-2 bg-white/10 text-white rounded-xl shadow hover:bg-white/20 transition-all border border-white/10 text-xs font-bold">先月</button>
-           <button onClick={nextMonth} className="px-4 py-2 bg-white/10 text-white rounded-xl shadow hover:bg-white/20 transition-all border border-white/10 text-xs font-bold">次月</button>
+           <button onClick={prevMonth} className="px-4 py-2 bg-white text-slate-700 rounded-xl hover:bg-slate-50 transition-all border border-slate-200 text-xs font-semibold">先月</button>
+           <button onClick={nextMonth} className="px-4 py-2 bg-white text-slate-700 rounded-xl hover:bg-slate-50 transition-all border border-slate-200 text-xs font-semibold">次月</button>
         </div>
       </div>
 
