@@ -492,7 +492,7 @@ export default function App() {
     setExpandedTaskId(prev => prev === id ? null : id);
   };
 
-  const handleLogin = async (email?: string, avatarUrl?: string, slackUid?: string) => {
+  const handleLogin = async (email?: string) => {
     if (!email) return;
     console.log('Logged in with email:', email);
 
@@ -511,7 +511,7 @@ export default function App() {
           return;
         }
 
-        const newProfile = createUserProfile(email, avatarUrl, slackUid);
+        const newProfile = createUserProfile(email);
         setUserProfile(newProfile);
         setMembers(prev => [...prev, newProfile]);
         await saveMemberToFirestore(newProfile);
@@ -536,7 +536,7 @@ export default function App() {
       return;
     }
 
-    const newProfile = createUserProfile(email, avatarUrl, slackUid);
+    const newProfile = createUserProfile(email);
     setUserProfile(newProfile);
     setMembers(prev => [...prev, newProfile]);
     setIsLoggedIn(true);
@@ -1649,10 +1649,8 @@ function ImagePreviewModal({ imageUrl, onClose }: { imageUrl: string, onClose: (
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string, slackUid?: string) => void }) {
-  const [isRegistering, setIsRegistering] = useState(false);
+function LoginScreen({ onLogin }: { onLogin: (email: string) => void }) {
   const [email, setEmail] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -1660,39 +1658,7 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
     if (lastEmail) {
       setEmail(lastEmail);
     }
-
-    if (typeof window !== 'undefined') {
-      const searchParams = new URLSearchParams(window.location.search);
-      const slackEmail = searchParams.get('slack_email');
-      const slackUid = searchParams.get('slack_uid');
-      if (slackEmail) {
-        const localUsers = getStoredUsers();
-        const avatarFromLocal = localUsers[slackEmail]?.avatarUrl;
-        saveLastEmail(slackEmail);
-        setEmail(slackEmail);
-        onLogin(slackEmail, avatarFromLocal, slackUid || undefined);
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, '', cleanUrl);
-      }
-    }
   }, []);
-
-  const saveLastEmail = (email: string) => {
-    localStorage.setItem('syncTaskGamifyLastEmail', email);
-  };
-
-  const getStoredUsers = () => {
-    return JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
-  };
-
-  const setStoredUsers = (users: Record<string, { email: string; avatarUrl?: string }>) => {
-    localStorage.setItem('syncTaskGamifyUsers', JSON.stringify(users));
-  };
-
-  const isFirestoreConfigured = IS_FIRESTORE_CONFIGURED;
-
-  const slackClientId = import.meta.env.VITE_SLACK_CLIENT_ID;
-  const slackRedirectUri = import.meta.env.VITE_SLACK_REDIRECT_URI;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1706,85 +1672,8 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
       return;
     }
 
-    const localUsers = getStoredUsers();
-    let firestoreFailed = false;
-
-    if (isFirestoreConfigured && db) {
-      try {
-        const memberRef = doc(db, MEMBERS_COLLECTION, email);
-        const memberSnapshot = await getDoc(memberRef);
-
-        if (isRegistering) {
-          if (memberSnapshot.exists()) {
-            setError('このメールアドレスは既に登録されています。ログイン画面からログインしてください。');
-            return;
-          }
-          const newProfile = createUserProfile(email, avatarUrl);
-          await setDoc(memberRef, newProfile);
-          saveLastEmail(email);
-          onLogin(email, avatarUrl);
-          return;
-        }
-
-        if (!memberSnapshot.exists()) {
-          if (localUsers[email]) {
-            saveLastEmail(email);
-            onLogin(email, localUsers[email].avatarUrl);
-            return;
-          }
-          setError('登録されていないメールアドレスです。初回登録を行ってください。');
-          return;
-        }
-
-        const savedMember = deserializeMember(memberSnapshot.data(), memberSnapshot.id);
-        saveLastEmail(email);
-        onLogin(email, savedMember.avatarUrl);
-        return;
-      } catch (error) {
-        console.error('Firestore login error:', error);
-        firestoreFailed = true;
-      }
-    }
-
-    // Firestoreが利用できない場合のローカルフォールバック
-    if (isRegistering) {
-      if (localUsers[email]) {
-        setError('このメールアドレスは既に登録されています。ログイン画面からログインしてください。');
-        return;
-      }
-      localUsers[email] = { email, avatarUrl };
-      setStoredUsers(localUsers);
-      saveLastEmail(email);
-      onLogin(email, avatarUrl);
-      return;
-    }
-
-    if (localUsers[email]) {
-      saveLastEmail(email);
-      onLogin(email, localUsers[email].avatarUrl);
-      return;
-    }
-
-    if (firestoreFailed) {
-      setError('Firestoreに接続できませんでした。ローカル登録はまだ行われていません。');
-    } else {
-      setError('登録されていないメールアドレスです。初回登録を行ってください。');
-    }
-  };
-
-  const handleSlackLogin = (e: React.MouseEvent) => {
-    e.preventDefault();
-    if (!slackClientId || !slackRedirectUri) {
-      setError('Slack連携はまだ設定されていません。VITE_SLACK_CLIENT_ID と VITE_SLACK_REDIRECT_URI を .env で設定してください。');
-      return;
-    }
-
-    const slackScope = 'chat:write,users:read,users:read.email';
-    const authUrl = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(slackClientId)}&scope=${encodeURIComponent(slackScope)}&redirect_uri=${encodeURIComponent(slackRedirectUri)}`;
-    window.location.href = authUrl;
-    return;
-
-    setError('Slack連携はまだ設定されていません。VITE_SLACK_CLIENT_ID と VITE_SLACK_REDIRECT_URI を .env で設定してください。');
+    localStorage.setItem('syncTaskGamifyLastEmail', email);
+    onLogin(email);
   };
 
   return (
@@ -1806,12 +1695,6 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
             Sync<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Task</span>
           </h1>
           <p className="text-slate-300 font-bold text-lg md:text-xl max-w-sm mx-auto leading-relaxed">互いにプレッシャーをかけて、<br/>意識と生産性を高め合おう。</p>
-          
-          <div className="flex flex-wrap justify-center gap-2 pt-2 pb-4">
-            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-indigo-300 shadow-sm">🔥 FIGHT機能</span>
-            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-purple-300 shadow-sm">⏱️ 予実の振り返り</span>
-            <span className="px-3 py-1 bg-white/10 border border-white/10 rounded-full text-xs font-bold text-pink-300 shadow-sm">📸 証拠写真の共有</span>
-          </div>
         </div>
 
         <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] p-8 space-y-6 shadow-2xl">
@@ -1828,77 +1711,19 @@ function LoginScreen({ onLogin }: { onLogin: (email: string, avatarUrl?: string,
               {error && <p className="text-rose-400 text-[10px] font-bold pl-2">{error}</p>}
             </div>
 
-            {isRegistering && (
-              <div className="space-y-2 text-left">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-2">プロフィールアイコン (任意)</label>
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-[20px] bg-white/10 border border-white/20 flex items-center justify-center overflow-hidden shrink-0">
-                    {avatarUrl ? (
-                      <img src={avatarUrl} className="w-full h-full object-cover" alt="Avatar" />
-                    ) : (
-                      <User className="text-slate-400" size={24} />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <button 
-                      type="button"
-                      onClick={() => document.getElementById('login-avatar-upload')?.click()}
-                      className="w-full py-3 bg-white/10 text-white text-xs font-bold rounded-xl hover:bg-white/20 transition-all border border-white/10"
-                    >
-                      画像を選択
-                    </button>
-                    <input 
-                      id="login-avatar-upload"
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => setAvatarUrl(ev.target?.result as string);
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
             <div className="flex flex-col gap-3">
               <button 
                 type="submit"
                 className="w-full flex items-center justify-center gap-3 bg-indigo-600 text-white py-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all active:scale-95 shadow-xl border border-indigo-500"
               >
-                {isRegistering ? '登録してはじめる' : 'メールアドレスでログイン'}
+                ログイン
               </button>
               
-              {!isRegistering && (
-                <button 
-                  type="button"
-                  onClick={handleSlackLogin}
-                  className="w-full flex items-center justify-center gap-3 bg-white text-slate-900 py-4 rounded-2xl font-bold hover:bg-slate-100 transition-all active:scale-95 shadow-xl"
-                >
-                  <img src="https://cdn.brandfetch.io/slack.com/w/512/h/512/fallback.png" alt="Slack" className="w-5 h-5" />
-                  Slackでログイン (通知連携)
-                </button>
-              )}
             </div>
           </form>
 
           <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-[10px] text-indigo-300 font-bold leading-relaxed">
-             💡 {isRegistering ? '登録したメールアドレス宛に通知が届きます。入力したメールアドレスは次回ログイン時に自動入力されます。' : 'Slackでログインすると、Slack OAuthを使って通知連携が可能です。現在は環境変数が設定されている場合のみSlackの認可画面に遷移します。'}
-          </div>
-          
-          <div className="pt-4 border-t border-white/10">
-            <button 
-              type="button"
-              onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
-              className="text-sm font-bold text-white hover:text-indigo-400 transition-colors"
-            >
-              {isRegistering ? '既にアカウントをお持ちの方はこちら (ログイン)' : '初めての方はこちら (初回登録)'}
-            </button>
+             💡 メールアドレスを入力するだけでログインできます。未登録の場合は自動的に新規登録されます。
           </div>
         </div>
 
