@@ -426,6 +426,21 @@ export default function App() {
   };
   const handleLogout = () => setIsLoggedIn(false);
 
+  const sendSlackWebhook = async (text: string) => {
+    const webhookUrl = import.meta.env.VITE_SLACK_WEBHOOK_URL;
+    if (!webhookUrl) return;
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+        mode: 'no-cors', // Slack Webhook は CORS を許可していないため no-cors が必要
+      });
+      console.log('Slack webhook sent successfully (no-cors)');
+    } catch (e) {
+      console.error('Slack webhook failed:', e);
+    }
+  };
+
   const addNotification = (type: Notification['type'], taskTitle: string) => {
     const newNotif: Notification = {
       id: Math.random().toString(36).substr(2, 9),
@@ -446,6 +461,10 @@ export default function App() {
     
     if (actionStr) {
       showToast(actionStr);
+      
+      const slackMessage = `🚀 *SyncTask通知*\n*ユーザー:* ${userProfile.displayName}\n*アクション:* ${actionStr}`;
+      sendSlackWebhook(slackMessage);
+
       if (userProfile.slackUid) {
         console.log(`[Slack Notification -> ${userProfile.slackUid}] ${actionStr}`);
       }
