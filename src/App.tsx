@@ -37,7 +37,7 @@ import { ja } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db } from './lib/firebase';
-import { collection, query, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, getDoc, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
 
 // --- Utils ---
 function cn(...inputs: ClassValue[]) {
@@ -77,6 +77,7 @@ interface Task {
   startPhoto?: string;
   dueDate: Date;
   updatedAt: Date;
+  startedAt?: Date;
   fights?: { senderId: string, timestamp: number }[];
 }
 
@@ -125,6 +126,29 @@ const MESSAGES_COLLECTION = 'chatMessages';
 const SESSION_STORAGE_KEY = 'syncTaskGamifySession';
 const LAST_EMAIL_STORAGE_KEY = 'syncTaskGamifyLastEmail';
 const LOCAL_MEMBERS_STORAGE_KEY = 'syncTaskGamifyUsers';
+const LOCAL_MESSAGES_STORAGE_KEY = 'syncTaskGamifyMessages';
+
+function createId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2, 11);
+}
+
+function toFirestoreValue(value: unknown): unknown {
+  if (value instanceof Date) return Timestamp.fromDate(value);
+  if (Array.isArray(value)) return value.map(toFirestoreValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, toFirestoreValue(v)])
+    );
+  }
+  return value;
+}
+
+function toFirestoreDoc<T extends object>(data: T): Record<string, unknown> {
+  const { id: _id, ...rest } = data as T & { id?: string };
+  return toFirestoreValue(rest) as Record<string, unknown>;
+}
 const IS_FIRESTORE_CONFIGURED = Boolean(
   import.meta.env.VITE_FIREBASE_API_KEY &&
   import.meta.env.VITE_FIREBASE_AUTH_DOMAIN &&
@@ -157,7 +181,9 @@ function deserializeTask(entry: any, id?: string): Task {
     attachments: entry.attachments || [],
     startPhoto: entry.startPhoto,
     dueDate: normalizeFirestoreDate(entry.dueDate),
-    updatedAt: normalizeFirestoreDate(entry.updatedAt)
+    updatedAt: normalizeFirestoreDate(entry.updatedAt),
+    startedAt: entry.startedAt ? normalizeFirestoreDate(entry.startedAt) : undefined,
+    fights: entry.fights || []
   };
 }
 
@@ -213,13 +239,10 @@ async function saveTaskToFirestore(task: Task) {
     return;
   }
   try {
-    await setDoc(doc(db, TASKS_COLLECTION, task.id), {
-      ...task,
-      dueDate: task.dueDate,
-      updatedAt: task.updatedAt
-    });
+    await setDoc(doc(db, TASKS_COLLECTION, task.id), toFirestoreDoc(task));
   } catch (error) {
     console.error('Firestore save task failed:', error);
+    throw error;
   }
 }
 
@@ -233,11 +256,10 @@ async function updateTaskInFirestore(taskId: string, data: Partial<Task>) {
     return;
   }
   try {
-    await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
-      ...data
-    } as any);
+    await updateDoc(doc(db, TASKS_COLLECTION, taskId), toFirestoreDoc(data));
   } catch (error) {
     console.error('Firestore update task failed:', error);
+    throw error;
   }
 }
 
@@ -270,16 +292,71 @@ async function saveMemberToFirestore(member: Partial<UserProfile> & { id: string
   }
 }
 
+function persistMessageLocally(msg: ChatMessage) {
+  if (typeof window === 'undefined') return;
+  try {
+    const stored: ChatMessage[] = JSON.parse(localStorage.getItem(LOCAL_MESSAGES_STORAGE_KEY) || '[]');
+    const normalized = {
+      ...msg,
+      senderId: normalizeEmail(msg.senderId),
+      receiverId: normalizeEmail(msg.receiverId),
+      timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp
+    };
+    localStorage.setItem(
+      LOCAL_MESSAGES_STORAGE_KEY,
+      JSON.stringify([...stored.filter(m => m.id !== msg.id), normalized])
+    );
+  } catch (e) {
+    console.error('Local message save failed:', e);
+  }
+}
+
+function loadMessagesFromLocalStorage(): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_MESSAGES_STORAGE_KEY) || '[]');
+    return stored.map((m: any) => ({
+      ...m,
+      senderId: normalizeEmail(m.senderId),
+      receiverId: normalizeEmail(m.receiverId),
+      timestamp: normalizeFirestoreDate(m.timestamp)
+    })) as ChatMessage[];
+  } catch {
+    return [];
+  }
+}
+
 async function saveMessageToFirestore(msg: ChatMessage) {
+  const normalized: ChatMessage = {
+    ...msg,
+    senderId: normalizeEmail(msg.senderId),
+    receiverId: normalizeEmail(msg.receiverId)
+  };
+  persistMessageLocally(normalized);
+
   if (!db) return;
   try {
-    await setDoc(doc(db, MESSAGES_COLLECTION, msg.id), {
-      ...msg,
-      timestamp: msg.timestamp
-    });
+    await setDoc(doc(db, MESSAGES_COLLECTION, normalized.id), toFirestoreDoc(normalized));
   } catch (error) {
     console.error('Firestore save message failed:', error);
+    throw error;
   }
+}
+
+function buildAssignedTaskCopy(source: Task, targetUserId: string, assignedBy: string): Task {
+  return {
+    ...source,
+    id: createId(),
+    userId: normalizeEmail(targetUserId),
+    assignedBy: normalizeEmail(assignedBy),
+    parentId: null,
+    status: 'todo',
+    actualMinutes: 0,
+    startPhoto: undefined,
+    mismatchReason: '',
+    startedAt: undefined,
+    updatedAt: new Date()
+  };
 }
 
 async function deleteMessageFromFirestore(msgId: string) {
@@ -334,7 +411,11 @@ export default function App() {
   });
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   // `isLocked` と `activeTaskId` は `useState` ではなく `currentUserTasks` から導出する（後述）
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window === 'undefined' || IS_FIRESTORE_CONFIGURED) return [];
+    return loadMessagesFromLocalStorage();
+  });
+  const [progressTick, setProgressTick] = useState(0);
   const [timerSeconds, setTimerSeconds] = useState(2700); // 45 mins
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -387,16 +468,33 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isLocked, timerSeconds, activeTaskId, tasks]);
 
+  useEffect(() => {
+    const hasActive = tasks.some(t => t.status === 'doing');
+    if (!hasActive) return;
+    const id = setInterval(() => setProgressTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [tasks]);
+
   const memberProgress = useMemo(() => {
     const list = members.map(member => {
-      const activeTask = tasks.find(t => t.userId === member.id && t.status === 'doing');
-      const pendingTasks = tasks.filter(t => t.userId === member.id && t.status !== 'done');
+      const memberId = normalizeEmail(member.id);
+      const activeTask = tasks.find(t => normalizeEmail(t.userId) === memberId && t.status === 'doing');
+      const pendingTasks = tasks.filter(t => normalizeEmail(t.userId) === memberId && t.status !== 'done' && !t.parentId);
+      const elapsedMinutes = activeTask?.startedAt
+        ? Math.max(0, Math.floor((Date.now() - activeTask.startedAt.getTime()) / 60000))
+        : 0;
+      const progressPercent = activeTask
+        ? Math.min(100, Math.round((elapsedMinutes / Math.max(activeTask.estimatedMinutes || 1, 1)) * 100))
+        : 0;
       return {
         userId: member.id,
         member,
-        taskTitle: activeTask ? activeTask.title : '',
-        status: activeTask ? 'doing' : pendingTasks.length ? 'waiting' : 'none',
-        progress: activeTask ? 60 + Math.min(40, pendingTasks.length * 10) : 0,
+        activeTask,
+        taskTitle: activeTask ? activeTask.title : (pendingTasks[0]?.title || ''),
+        status: activeTask ? 'doing' as const : pendingTasks.length ? 'waiting' as const : 'none' as const,
+        progress: activeTask ? progressPercent : 0,
+        elapsedMinutes,
+        pendingCount: pendingTasks.length,
         startPhoto: activeTask?.startPhoto
       };
     });
@@ -408,7 +506,7 @@ export default function App() {
       if (a.status !== 'none' && b.status === 'none') return -1;
       return a.member.displayName.localeCompare(b.member.displayName, 'ja');
     });
-  }, [members, tasks]);
+  }, [members, tasks, progressTick]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !IS_FIRESTORE_CONFIGURED || !db) return;
@@ -443,12 +541,15 @@ export default function App() {
         return {
           ...data,
           id: docSnapshot.id,
+          senderId: normalizeEmail(data.senderId || ''),
+          receiverId: normalizeEmail(data.receiverId || ''),
           timestamp: normalizeFirestoreDate(data.timestamp)
         } as ChatMessage;
       });
       setChatMessages(loadedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()));
     }, (error) => {
       console.error('Firestore messages snapshot failed:', error);
+      setChatMessages(loadMessagesFromLocalStorage());
     });
     return () => unsubscribe();
   }, []);
@@ -666,9 +767,10 @@ export default function App() {
   const finalizeStartTask = async (taskId: string, photoUrl?: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
-    const updatedTask = { ...task, status: 'doing', startPhoto: photoUrl, updatedAt: new Date() };
+    const startedAt = new Date();
+    const updatedTask = { ...task, status: 'doing' as const, startPhoto: photoUrl, updatedAt: startedAt, startedAt };
     setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
-    await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: new Date() });
+    await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: startedAt, startedAt });
     setTimerSeconds(task.estimatedMinutes * 60);
     setShowPhotoModal(false);
     setPendingStartTaskId(null);
@@ -688,8 +790,9 @@ export default function App() {
 
   const resumeTask = async (taskId: string) => {
     const task = tasks.find(t => t.id === taskId);
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'doing' } : t));
-    if (task) await updateTaskInFirestore(taskId, { status: 'doing', updatedAt: new Date() });
+    const startedAt = task?.startedAt || new Date();
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'doing' as const, startedAt } : t));
+    if (task) await updateTaskInFirestore(taskId, { status: 'doing', updatedAt: new Date(), startedAt });
   };
 
   const completeTask = (taskId: string) => {
@@ -767,7 +870,7 @@ export default function App() {
       await updateTaskInFirestore(editingTask.id, updatedTask);
     } else {
       const parentIdForNewTask = taskData.parentId || targetParentId;
-      const newId = Math.random().toString(36).substr(2, 9);
+      const newId = createId();
       const newTask: Task = {
         id: newId,
         userId: userProfile.id,
@@ -814,6 +917,13 @@ export default function App() {
     // Signal for expansion
     setExpansionSignals(prev => ({ ...prev, [parentId]: (prev[parentId] || 0) + 1 }));
   };
+
+  const assignedFromOthers = useMemo(
+    () => currentUserTasks.filter(
+      t => t.assignedBy && normalizeEmail(t.assignedBy) !== normalizeEmail(userProfile.id) && t.status !== 'done' && !t.parentId
+    ),
+    [currentUserTasks, userProfile.id]
+  );
 
   const pendingTaskCount = useMemo(
     () => currentUserTasks.filter(t => t.status !== 'done' && !t.parentId).length,
@@ -1043,6 +1153,23 @@ export default function App() {
                   </motion.div>
                 )}
 
+                {assignedFromOthers.length > 0 && (
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 space-y-2">
+                    <p className="text-xs font-semibold text-indigo-700">届いたタスク（{assignedFromOthers.length}件）</p>
+                    <ul className="space-y-1">
+                      {assignedFromOthers.slice(0, 3).map(t => {
+                        const from = members.find(m => normalizeEmail(m.id) === normalizeEmail(t.assignedBy));
+                        return (
+                          <li key={t.id} className="text-sm text-slate-700 truncate">
+                            <span className="font-medium">{from?.displayName || t.assignedBy}</span>
+                            {' から: '}{t.title}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">タスク一覧</h2>
@@ -1210,23 +1337,34 @@ export default function App() {
                    setShowTaskForm(true);
                  }}
                  onAssignTask={async (task, targetUserId) => {
-                   const updatedTask: Task = {
-                     ...task,
-                     userId: targetUserId,
-                     assignedBy: userProfile.id,
-                     status: 'todo',
-                     actualMinutes: 0,
-                     startPhoto: undefined,
-                     mismatchReason: '',
-                     updatedAt: new Date()
-                   };
-                   setTasks(prev => prev.map(t => t.id === task.id ? updatedTask : t));
-                   await updateTaskInFirestore(task.id, updatedTask);
+                   const assignedTask = buildAssignedTaskCopy(task, targetUserId, userProfile.id);
+                   setTasks(prev => [...prev, assignedTask]);
+                   try {
+                     await saveTaskToFirestore(assignedTask);
+                   } catch {
+                     showToast('タスクの送信に失敗しました。接続を確認してください。');
+                     setTasks(prev => prev.filter(t => t.id !== assignedTask.id));
+                     throw new Error('assign failed');
+                   }
+                   const target = members.find(m => m.id === targetUserId);
+                   showToast(`${target?.displayName || '相手'}にタスクを送りました`);
+                   return assignedTask;
                  }}
                  globalMessages={chatMessages}
                  onSendMessage={(msg) => {
-                   setChatMessages(prev => [...prev, msg].sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime()));
-                   saveMessageToFirestore(msg);
+                   const normalized: ChatMessage = {
+                     ...msg,
+                     senderId: normalizeEmail(msg.senderId),
+                     receiverId: normalizeEmail(msg.receiverId)
+                   };
+                   setChatMessages(prev =>
+                     [...prev.filter(m => m.id !== normalized.id), normalized].sort(
+                       (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+                     )
+                   );
+                   saveMessageToFirestore(normalized).catch(() => {
+                     showToast('メッセージの送信に失敗しました');
+                   });
                  }}
                  onDeleteMessage={deleteMessageFromFirestore}
                />
@@ -1278,20 +1416,44 @@ export default function App() {
                                     </div>
                                   )}
                                </div>
-                               <div className="text-[10px] text-indigo-600 font-bold mt-1 bg-indigo-50 inline-block px-2 py-0.5 rounded uppercase tracking-tighter">
-                                  {progressItem.status === 'doing' ? '実行中' : progressItem.status === 'waiting' ? 'タスク待機中' : 'タスクなし'}
+                               <div className={cn(
+                                  "text-[10px] font-bold mt-1 inline-block px-2 py-0.5 rounded uppercase tracking-tighter",
+                                  progressItem.status === 'doing' ? "text-indigo-700 bg-indigo-50" :
+                                  progressItem.status === 'waiting' ? "text-amber-700 bg-amber-50" : "text-slate-500 bg-slate-100"
+                               )}>
+                                  {progressItem.status === 'doing' ? '実行中' : progressItem.status === 'waiting' ? `待機中（${progressItem.pendingCount}件）` : 'タスクなし'}
                                </div>
                              </div>
                           </div>
                           
-                          <div className="flex items-center gap-3 sm:flex-1 sm:min-w-0">
-                            <div className="flex-1 min-w-0">
-                               <div className="text-xs text-slate-500 mb-1 truncate">{progressItem.taskTitle}</div>
+                          <div className="flex items-center gap-3 sm:flex-1 sm:min-w-0 w-full">
+                            <div className="flex-1 min-w-0 space-y-1">
+                               {progressItem.status === 'doing' ? (
+                                 <>
+                                   <div className="text-sm font-semibold text-slate-800 truncate">{progressItem.taskTitle}</div>
+                                   <div className="text-xs text-indigo-600 font-medium">
+                                     開始から {progressItem.elapsedMinutes} 分経過
+                                     {progressItem.activeTask && (
+                                       <span className="text-slate-500"> / 目安 {progressItem.activeTask.estimatedMinutes} 分</span>
+                                     )}
+                                   </div>
+                                 </>
+                               ) : progressItem.status === 'waiting' ? (
+                                 <>
+                                   <div className="text-sm font-medium text-slate-700 truncate">次: {progressItem.taskTitle}</div>
+                                   <div className="text-xs text-slate-500">未完了タスク {progressItem.pendingCount} 件</div>
+                                 </>
+                               ) : (
+                                 <div className="text-xs text-slate-400">進行中のタスクはありません</div>
+                               )}
                                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                                   <motion.div 
                                     initial={{ width: 0 }}
                                     animate={{ width: `${progressItem.progress}%` }}
-                                    className="h-full bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]"
+                                    className={cn(
+                                      "h-full transition-all",
+                                      progressItem.status === 'doing' ? "bg-indigo-500" : "bg-slate-300"
+                                    )}
                                   />
                                </div>
                             </div>
@@ -2828,7 +2990,7 @@ function MessagesView({
   tasks: Task[], 
   currentUser: UserProfile, 
   onShareNewTask: () => void, 
-  onAssignTask: (task: Task, targetUserId: string) => void,
+  onAssignTask: (task: Task, targetUserId: string) => Promise<Task>,
   globalMessages: ChatMessage[],
   onSendMessage: (msg: ChatMessage) => void,
   onDeleteMessage: (id: string) => void
@@ -2860,16 +3022,23 @@ function MessagesView({
   };
 
   const getThreadMessages = (memberId: string) => {
-    return globalMessages.filter(msg => 
-      (msg.senderId === currentUser.id && msg.receiverId === memberId) || 
-      (msg.senderId === memberId && msg.receiverId === currentUser.id)
-    );
+    const me = normalizeEmail(currentUser.id);
+    const them = normalizeEmail(memberId);
+    return globalMessages
+      .filter(msg =>
+        (normalizeEmail(msg.senderId) === me && normalizeEmail(msg.receiverId) === them) ||
+        (normalizeEmail(msg.senderId) === them && normalizeEmail(msg.receiverId) === me)
+      )
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   };
 
-  const shareTask = (task: Task) => {
-    handleSendMessage(`タスクを共有しました: ${task.title}`, task.id);
-    if (selectedThread) {
-      onAssignTask(task, selectedThread.id);
+  const shareTask = async (task: Task) => {
+    if (!selectedThread) return;
+    try {
+      const assigned = await onAssignTask(task, selectedThread.id);
+      handleSendMessage(`タスクを共有しました: ${task.title}`, assigned.id);
+    } catch {
+      // onAssignTask shows toast on failure
     }
   };
 
@@ -2961,55 +3130,76 @@ function MessagesView({
                    </button>
                 </div>
                 
-                <div className="flex-1 p-4 sm:p-8 overflow-y-auto space-y-6 scrollbar-hide min-h-0">
-                   <div className="flex justify-start">
-                      <div className="max-w-[75%] p-5 bg-white shadow-sm border border-slate-100 rounded-[32px] rounded-tl-none text-sm font-medium text-slate-600 leading-relaxed shadow-indigo-100/10">
-                        こんにちは！お疲れ様です。今日の進捗状況はいかがでしょうか？
-                      </div>
-                   </div>
+                <div className="flex-1 p-4 sm:p-8 overflow-y-auto space-y-4 scrollbar-hide min-h-0">
+                   {getThreadMessages(selectedThread.id).length === 0 && (
+                     <div className="flex justify-start w-full">
+                        <div className="max-w-[85%] p-4 bg-slate-50 border border-slate-100 rounded-2xl rounded-tl-sm text-sm text-slate-500">
+                          メッセージを送って会話を始めましょう。
+                        </div>
+                     </div>
+                   )}
 
-                   {getThreadMessages(selectedThread.id).map((msg, i) => (
-                      <div key={msg.id || i} className={cn("flex group/msg gap-3 items-end", msg.senderId === currentUser.id ? "justify-end" : "justify-start")}>
-                        {msg.senderId !== currentUser.id && (
+                   {getThreadMessages(selectedThread.id).map((msg, i) => {
+                      const isMine = normalizeEmail(msg.senderId) === normalizeEmail(currentUser.id);
+                      const relatedTask = msg.relatedTaskId ? tasks.find(t => t.id === msg.relatedTaskId) : undefined;
+                      return (
+                      <div key={msg.id || i} className={cn("flex w-full group/msg gap-2 sm:gap-3", isMine ? "justify-end" : "justify-start")}>
+                        {!isMine && (
                            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500 font-bold text-xs shrink-0 overflow-hidden shadow-inner">
                               {(selectedThread.avatarUrl || selectedThread.backgroundImageUrl) ? (
                                 <img src={selectedThread.avatarUrl || selectedThread.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
                               ) : selectedThread.displayName[0]}
                            </div>
                         )}
-                        <div className="relative max-w-[75%]">
-                          {msg.senderId === currentUser.id && (
+                        <div className={cn("relative max-w-[85%] min-w-[120px]", isMine ? "order-1" : "order-2")}>
+                          {isMine && (
                             <button 
                               onClick={() => onDeleteMessage(msg.id)}
-                              className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover/msg:opacity-100 transition-all"
+                              className="absolute -left-9 top-1/2 -translate-y-1/2 p-1.5 text-slate-300 hover:text-rose-500 opacity-0 group-hover/msg:opacity-100 transition-all"
                               title="送信を取り消す"
                             >
                               <X size={14} />
                             </button>
                           )}
                           <div className={cn(
-                            "p-5 rounded-[32px] flex flex-col gap-4 shadow-xl",
-                            msg.senderId === currentUser.id ? "bg-indigo-600 text-white rounded-tr-none shadow-indigo-200/40" : "bg-white border border-slate-100 text-slate-700 rounded-tl-none shadow-indigo-100/10"
+                            "px-4 py-3 rounded-2xl flex flex-col gap-2 shadow-sm",
+                            isMine
+                              ? "bg-indigo-600 text-white rounded-br-sm"
+                              : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm"
                           )}>
-                            <div className="text-sm font-bold leading-relaxed">{msg.text}</div>
-                            {msg.relatedTaskId && (
-                              <div className={cn("p-4 rounded-2xl border flex flex-col gap-3", msg.senderId === currentUser.id ? "bg-white/10 border-white/20" : "bg-indigo-50 border-indigo-100")}>
-                                 <div className="text-[10px] uppercase font-black tracking-widest opacity-60">Shared Task</div>
-                                 <div className="font-black truncate text-sm">{tasks.find(t => t.id === msg.relatedTaskId)?.title || '削除されたタスク'}</div>
-                                 <button className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black hover:bg-indigo-700 transition-all shadow-md">詳細を確認</button>
+                            {msg.text && (
+                              <div className={cn("text-sm leading-relaxed whitespace-pre-wrap break-words", isMine ? "text-white" : "text-slate-800")}>
+                                {msg.text}
                               </div>
                             )}
+                            {msg.relatedTaskId && (
+                              <div className={cn("p-3 rounded-xl border flex flex-col gap-1", isMine ? "bg-white/15 border-white/25" : "bg-indigo-50 border-indigo-100")}>
+                                 <div className={cn("text-[10px] font-semibold uppercase tracking-wide", isMine ? "text-indigo-100" : "text-indigo-600")}>共有タスク</div>
+                                 <div className={cn("font-semibold text-sm truncate", isMine ? "text-white" : "text-slate-800")}>
+                                   {relatedTask?.title || 'タスク'}
+                                 </div>
+                                 {relatedTask && (
+                                   <div className={cn("text-[10px]", isMine ? "text-indigo-100" : "text-slate-500")}>
+                                     {relatedTask.status === 'done' ? '完了' : relatedTask.status === 'doing' ? '実行中' : '未着手'}
+                                     {' · '}{relatedTask.estimatedMinutes}分
+                                   </div>
+                                 )}
+                              </div>
+                            )}
+                            <div className={cn("text-[10px] text-right", isMine ? "text-indigo-200" : "text-slate-400")}>
+                              {format(msg.timestamp, 'HH:mm')}
+                            </div>
                           </div>
                         </div>
-                        {msg.senderId === currentUser.id && (
-                           <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden shadow-inner">
-                              {(currentUser.avatarUrl || currentUser.backgroundImageUrl) ? (
-                                <img src={currentUser.avatarUrl || currentUser.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
+                        {isMine && (
+                           <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden">
+                              {currentUser.avatarUrl ? (
+                                <img src={currentUser.avatarUrl} className="w-full h-full object-cover" alt="" />
                               ) : currentUser.displayName[0]}
                            </div>
                         )}
                       </div>
-                   ))}
+                   );})}
                 </div>
 
                 <AnimatePresence>
