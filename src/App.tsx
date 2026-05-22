@@ -135,11 +135,14 @@ function createId() {
 }
 
 function toFirestoreValue(value: unknown): unknown {
+  if (value === undefined || value === null) return null;
   if (value instanceof Date) return Timestamp.fromDate(value);
   if (Array.isArray(value)) return value.map(toFirestoreValue);
-  if (value && typeof value === 'object') {
+  if (typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, toFirestoreValue(v)])
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, toFirestoreValue(v)])
     );
   }
   return value;

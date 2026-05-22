@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -23,7 +23,12 @@ const hasFirebaseConfig = Boolean(
 
 const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : undefined;
 export const auth = app ? getAuth(app) : null;
-export const db = app ? getFirestore(app) : null;
+export const db = app
+  ? initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
+      localCache: persistentLocalCache()
+    })
+  : null;
 export const storage = app ? getStorage(app) : null;
 
 export default app;
