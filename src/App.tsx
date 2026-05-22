@@ -169,7 +169,13 @@ function deserializeMember(entry: any, id?: string): UserProfile {
 }
 
 async function saveTaskToFirestore(task: Task) {
-  if (!db) return;
+  if (!db) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('syncTaskGamifyTasks') || '[]');
+      localStorage.setItem('syncTaskGamifyTasks', JSON.stringify([...stored, task]));
+    } catch(e) {}
+    return;
+  }
   try {
     await setDoc(doc(db, TASKS_COLLECTION, task.id), {
       ...task,
@@ -182,7 +188,14 @@ async function saveTaskToFirestore(task: Task) {
 }
 
 async function updateTaskInFirestore(taskId: string, data: Partial<Task>) {
-  if (!db) return;
+  if (!db) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('syncTaskGamifyTasks') || '[]');
+      const updated = stored.map((t: any) => t.id === taskId ? { ...t, ...data } : t);
+      localStorage.setItem('syncTaskGamifyTasks', JSON.stringify(updated));
+    } catch(e) {}
+    return;
+  }
   try {
     await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
       ...data
@@ -193,7 +206,13 @@ async function updateTaskInFirestore(taskId: string, data: Partial<Task>) {
 }
 
 async function deleteTaskFromFirestore(taskId: string) {
-  if (!db) return;
+  if (!db) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('syncTaskGamifyTasks') || '[]');
+      localStorage.setItem('syncTaskGamifyTasks', JSON.stringify(stored.filter((t: any) => t.id !== taskId)));
+    } catch(e) {}
+    return;
+  }
   try {
     await deleteDoc(doc(db, TASKS_COLLECTION, taskId));
   } catch (error) {
@@ -235,10 +254,26 @@ export default function App() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [tasks, setTasks] = useState<Task[]>(() => {
     if (typeof window === 'undefined') return INITIAL_TASKS;
+    if (!IS_FIRESTORE_CONFIGURED) {
+      try {
+        const storedTasks = JSON.parse(localStorage.getItem('syncTaskGamifyTasks') || '[]');
+        return storedTasks.map((t: any) => deserializeTask(t));
+      } catch (e) {
+        return [];
+      }
+    }
     return [];
   });
   const [members, setMembers] = useState<UserProfile[]>(() => {
     if (typeof window === 'undefined') return [];
+    if (!IS_FIRESTORE_CONFIGURED) {
+      try {
+        const storedUsers = JSON.parse(localStorage.getItem('syncTaskGamifyUsers') || '{}');
+        return Object.values(storedUsers).map((u: any) => createUserProfile(u.email, u.avatarUrl));
+      } catch (e) {
+        return [];
+      }
+    }
     return [];
   });
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
