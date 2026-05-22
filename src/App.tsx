@@ -558,6 +558,27 @@ export default function App() {
     }
   };
 
+  const sendEmailNotification = async (message: string) => {
+    const emails = members.map(m => m.id).filter(email => email && email.includes('@'));
+    if (emails.length === 0) return;
+
+    try {
+      await fetch('/api/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emails,
+          subject: `SyncTask Notification: ${userProfile.displayName} Action`,
+          message
+        })
+      });
+      console.log('Email notification requested');
+    } catch (e) {
+      console.error('Email notification failed:', e);
+    }
+  };
+
+
   const addNotification = (type: Notification['type'], taskTitle: string) => {
     const newNotif: Notification = {
       id: Math.random().toString(36).substr(2, 9),
@@ -582,6 +603,7 @@ export default function App() {
       
       const slackMessage = `🚀 *SyncTask通知*\n*ユーザー:* ${userProfile.displayName}\n*アクション:* ${actionStr}`;
       sendSlackWebhook(slackMessage);
+      sendEmailNotification(slackMessage);
 
       if (userProfile.slackUid) {
         console.log(`[Slack Notification -> ${userProfile.slackUid}] ${actionStr}`);
