@@ -1,0 +1,8 @@
+#!/bin/sh
+# Auto-push after each commit so GitHub (and Vercel) stay in sync.
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
+remote=$(git config --get "branch.${branch}.remote" 2>/dev/null)
+[ -z "$remote" ] && remote=origin
+
+echo "[post-commit] Pushing ${branch} to ${remote}..."
+git push "$remote" "$branch" 2>&1 || echo "[post-commit] Push skipped (offline or no upstream)."

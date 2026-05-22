@@ -274,7 +274,9 @@ function createUserProfile(email: string, avatarUrl?: string, slackUid?: string)
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : false
+  );
   const [activeTab, setActiveTab] = useState<'dashboard' | 'calendar' | 'messages' | 'members' | 'settings'>('dashboard');
   const [showCompleted, setShowCompleted] = useState(false);
   const [tasks, setTasks] = useState<Task[]>(() => {
@@ -856,7 +858,7 @@ export default function App() {
       className="min-h-screen font-sans text-slate-800 bg-fixed bg-cover bg-center transition-all duration-700 bg-white"
       style={{ backgroundImage: userProfile.backgroundImageUrl ? `url(${userProfile.backgroundImageUrl})` : 'none' }}
     >
-      <div className={cn("min-h-screen flex overflow-hidden", themeConfigs[theme])}>
+      <div className={cn("min-h-screen flex overflow-x-hidden", themeConfigs[theme])}>
         
         <Sidebar 
           sidebarOpen={sidebarOpen}
@@ -867,13 +869,22 @@ export default function App() {
           onClose={() => setSidebarOpen(false)}
         />
 
+        {sidebarOpen && (
+          <button
+            type="button"
+            aria-label="メニューを閉じる"
+            className="fixed inset-0 z-30 bg-slate-900/50 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
         {/* Main Content */}
         <main className={cn(
           "flex-1 transition-all duration-300 lg:ml-64 w-full h-screen overflow-y-auto scrollbar-hide",
           !sidebarOpen && "ml-0"
         )}>
           <header className={cn(
-            "sticky top-0 z-30 backdrop-blur-md border-b border-slate-200/50 p-4 flex items-center gap-4",
+            "sticky top-0 z-30 backdrop-blur-md border-b border-slate-200/50 p-3 sm:p-4 flex items-center gap-2 sm:gap-4 min-w-0",
             theme === 'minimal' ? "bg-white/50" : "bg-black/20"
           )}>
             {!sidebarOpen && (
@@ -892,13 +903,13 @@ export default function App() {
                 </div>
               </div>
             )}
-            <h1 className={cn("text-xl font-bold", theme === 'minimal' ? 'text-slate-800' : 'text-white')}>
+            <h1 className={cn("text-base sm:text-xl font-bold truncate min-w-0 flex-1", theme === 'minimal' ? 'text-slate-800' : 'text-white')}>
               {activeTab === 'dashboard' ? 'ダッシュボード' : 
                activeTab === 'members' ? 'メンバー進捗' :
                activeTab === 'calendar' ? 'カレンダー' : 
                activeTab === 'settings' ? '設定' : 'メッセージ'}
             </h1>
-            <div className="flex-1 flex justify-end gap-3">
+            <div className="flex shrink-0 justify-end gap-2 sm:gap-3">
               <div className="relative">
                 <button 
                   onClick={() => setShowNotifications(!showNotifications)}
@@ -920,7 +931,7 @@ export default function App() {
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute right-0 mt-2 w-80 bg-white rounded-3xl shadow-2xl border border-slate-100 py-4 z-50 overflow-hidden"
+                        className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] bg-white rounded-3xl shadow-2xl border border-slate-100 py-4 z-50 overflow-hidden"
                       >
                         <div className="px-6 pb-2 mb-2 border-b border-slate-50 flex items-center justify-between">
                            <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">通知</h3>
@@ -950,7 +961,7 @@ export default function App() {
               </div>
               <button 
                 onClick={() => setShowTaskForm(true)}
-                className="md:flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all shadow-md active:scale-95"
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 rounded-xl font-medium transition-all shadow-md active:scale-95 shrink-0"
               >
                 <Plus size={18} />
                 <span className="hidden sm:inline">タスク追加</span>
@@ -958,7 +969,7 @@ export default function App() {
             </div>
           </header>
 
-          <div className="p-6 space-y-8 max-w-7xl mx-auto">
+          <div className="p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto">
             {activeTab === 'dashboard' && (
               <>
                 {/* Active Timer Lock Area */}
@@ -992,7 +1003,7 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-col items-center">
-                        <div className="text-5xl font-mono font-black tracking-widest tabular-nums">
+                        <div className="text-4xl sm:text-5xl font-mono font-black tracking-widest tabular-nums">
                           {Math.floor(timerSeconds / 60)}:{String(timerSeconds % 60).padStart(2, '0')}
                         </div>
                         <div className="flex gap-4 mt-4">
@@ -1044,12 +1055,13 @@ export default function App() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     <div className="lg:col-span-2 space-y-6">
-                      <div className="flex items-center justify-between px-2">
-                        <div className="flex gap-6">
+                      <div className="flex flex-col gap-4 px-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex gap-4 sm:gap-6 shrink-0">
                            <button 
                             onClick={() => setShowCompleted(false)}
                             className={cn(
-                              "text-lg font-black transition-all pb-2 px-1 relative",
+                              "text-sm sm:text-lg font-black transition-all pb-2 px-1 relative whitespace-nowrap",
                               !showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
                             )}
                            >
@@ -1059,22 +1071,31 @@ export default function App() {
                            <button 
                             onClick={() => setShowCompleted(true)}
                             className={cn(
-                              "text-lg font-black transition-all pb-2 px-1 relative",
+                              "text-sm sm:text-lg font-black transition-all pb-2 px-1 relative whitespace-nowrap",
                               showCompleted ? "text-white" : "text-white/40 hover:text-white/60"
                             )}
                            >
                              完了済み ({currentUserTasks.filter(t => t.status === 'done').length})
                              {showCompleted && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-1 bg-white rounded-full" />}
                            </button>
+                          </div>
+
+                          <button 
+                            onClick={() => setShowAiModal(true)}
+                            className="flex items-center gap-1.5 text-indigo-400 bg-white/10 hover:bg-white/20 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold transition-all border border-white/10 shrink-0"
+                          >
+                            <Sparkles size={14} />
+                            <span>AI提案</span>
+                          </button>
                         </div>
                         
-                        <div className="flex items-center gap-2 overflow-x-auto max-w-[400px] scrollbar-hide px-2">
+                        <div className="flex items-center gap-2 overflow-x-auto w-full scrollbar-hide -mx-1 px-1">
                            {['すべて', ...availableCategories].map(cat => (
                              <button
                                key={cat}
                                onClick={() => setSelectedCategory(cat)}
                                className={cn(
-                                 "whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all",
+                                 "whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all shrink-0",
                                  selectedCategory === cat 
                                    ? "bg-white text-indigo-600 shadow-lg" 
                                    : "bg-white/10 text-white/60 hover:bg-white/20"
@@ -1084,14 +1105,6 @@ export default function App() {
                              </button>
                            ))}
                         </div>
-
-                        <button 
-                          onClick={() => setShowAiModal(true)}
-                          className="flex items-center gap-1.5 text-indigo-400 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-sm font-bold transition-all border border-white/10"
-                        >
-                          <Sparkles size={14} />
-                          AI提案
-                        </button>
                       </div>
                       
                       <div className="space-y-12">
@@ -1309,7 +1322,7 @@ export default function App() {
                   <h2 className="text-2xl font-black mb-6 px-2">チームメンバーの進捗</h2>
                   <div className="space-y-4 px-2">
                     {memberProgress.map((progressItem, idx) => (
-                        <div key={idx} className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
+                        <div key={idx} className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
                           <div className="flex items-center gap-4 flex-1 min-w-0">
                              <div className={cn(
                                 "w-12 h-12 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm shrink-0",
@@ -1340,31 +1353,33 @@ export default function App() {
                              </div>
                           </div>
                           
-                          <div className="flex-1 hidden md:block min-w-0">
-                             <div className="text-xs text-slate-500 mb-1 truncate">{progressItem.taskTitle}</div>
-                             <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                                <motion.div 
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${progressItem.progress}%` }}
-                                  className="h-full bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]"
-                                />
-                             </div>
-                          </div>
+                          <div className="flex items-center gap-3 sm:flex-1 sm:min-w-0">
+                            <div className="flex-1 min-w-0">
+                               <div className="text-xs text-slate-500 mb-1 truncate">{progressItem.taskTitle}</div>
+                               <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${progressItem.progress}%` }}
+                                    className="h-full bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.3)]"
+                                  />
+                               </div>
+                            </div>
 
-                          <motion.button 
-                            whileTap={{ scale: 0.9 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleReaction(progressItem.userId);
-                            }}
-                            className={cn(
-                              "p-3 rounded-2xl transition-all flex flex-col items-center gap-1 min-w-[60px]",
-                              reactionSent[progressItem.userId] ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
-                            )}
-                          >
-                            <ThumbsUp size={18} className={cn(reactionSent[progressItem.userId] && "animate-bounce")} />
-                            <span className="text-[9px] font-black italic">Fight!</span>
-                          </motion.button>
+                            <motion.button 
+                              whileTap={{ scale: 0.9 }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReaction(progressItem.userId);
+                              }}
+                              className={cn(
+                                "p-3 rounded-2xl transition-all flex flex-col items-center gap-1 min-w-[60px] shrink-0",
+                                reactionSent[progressItem.userId] ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
+                              )}
+                            >
+                              <ThumbsUp size={18} className={cn(reactionSent[progressItem.userId] && "animate-bounce")} />
+                              <span className="text-[9px] font-black italic">Fight!</span>
+                            </motion.button>
+                          </div>
                         </div>
                     ))}
                   </div>
@@ -1372,7 +1387,7 @@ export default function App() {
             )}
 
             {activeTab === 'settings' && (
-              <div className="max-w-2xl mx-auto bg-white rounded-3xl shadow-sm p-8 border border-slate-100 space-y-8">
+              <div className="max-w-2xl mx-auto bg-white rounded-3xl shadow-sm p-4 sm:p-8 border border-slate-100 space-y-8">
                  <h2 className="text-2xl font-black">個人設定</h2>
                  <div className="space-y-6">
                     <div className="space-y-3">
@@ -1516,7 +1531,7 @@ export default function App() {
 
                     <div className="pt-6 border-t border-slate-100">
                        <label className="text-sm font-bold text-slate-600 block mb-4">テーマ設定</label>
-                       <div className="grid grid-cols-5 gap-3">
+                       <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
                           {(['default', 'ocean', 'forest', 'sunset', 'minimal'] as AppTheme[]).map(t => (
                             <button 
                               key={t}
@@ -1606,7 +1621,7 @@ export default function App() {
         )}
       </AnimatePresence>
       {/* Toast Notifications */}
-      <div className="fixed bottom-6 right-6 z-[300] flex flex-col gap-2 pointer-events-none">
+      <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:bottom-6 z-[300] flex flex-col gap-2 pointer-events-none items-end">
         <AnimatePresence>
           {toasts.map(toast => (
             <motion.div
@@ -1759,7 +1774,7 @@ function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, 
     )}>
       <div className="h-full flex flex-col p-4">
         <div className="flex items-center justify-between mb-8 px-2">
-          <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl italic cursor-pointer" onClick={() => setActiveTab('dashboard')}>
+          <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl italic cursor-pointer" onClick={() => { setActiveTab('dashboard'); onClose(); }}>
             <Sparkles size={28} />
             <span>SyncTask</span>
           </div>
@@ -1769,15 +1784,15 @@ function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, 
         </div>
 
         <nav className="flex-1 space-y-2">
-          <SidebarItem icon={<LayoutDashboard size={20} />} label="ダッシュボード" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarItem icon={<User size={20} />} label="メンバー進捗" active={activeTab === 'members'} onClick={() => setActiveTab('members')} />
-          <SidebarItem icon={<CalendarIcon size={20} />} label="記録・カレンダー" active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')} />
-          <SidebarItem icon={<MessageSquare size={20} />} label="メッセージ" active={activeTab === 'messages'} onClick={() => setActiveTab('messages')} />
-          <SidebarItem icon={<Settings size={20} />} label="設定" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+          <SidebarItem icon={<LayoutDashboard size={20} />} label="ダッシュボード" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); onClose(); }} />
+          <SidebarItem icon={<User size={20} />} label="メンバー進捗" active={activeTab === 'members'} onClick={() => { setActiveTab('members'); onClose(); }} />
+          <SidebarItem icon={<CalendarIcon size={20} />} label="記録・カレンダー" active={activeTab === 'calendar'} onClick={() => { setActiveTab('calendar'); onClose(); }} />
+          <SidebarItem icon={<MessageSquare size={20} />} label="メッセージ" active={activeTab === 'messages'} onClick={() => { setActiveTab('messages'); onClose(); }} />
+          <SidebarItem icon={<Settings size={20} />} label="設定" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); onClose(); }} />
         </nav>
 
         <div className="pt-4 border-t border-slate-200">
-          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 mb-4 cursor-pointer" onClick={() => setActiveTab('settings')}>
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 mb-4 cursor-pointer" onClick={() => { setActiveTab('settings'); onClose(); }}>
             <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold overflow-hidden">
                {userProfile.avatarUrl ? (
                  <img src={userProfile.avatarUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
@@ -2206,17 +2221,17 @@ function TaskFormModal({ onClose, onSubmit, onDelete, initialTask, parentId, ava
   const presets = [15, 30, 45, 60];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/80 backdrop-blur-md" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-900/80 backdrop-blur-md" onClick={onClose}>
       <motion.div 
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.9, opacity: 0, y: 20 }}
         onClick={e => e.stopPropagation()}
-        className="bg-white w-full max-w-xl rounded-[48px] shadow-2xl overflow-hidden flex flex-col border border-white/20"
+        className="bg-white w-full max-w-xl rounded-t-[32px] sm:rounded-[48px] shadow-2xl overflow-hidden flex flex-col border border-white/20 max-h-[92dvh] sm:max-h-none"
       >
-        <div className="p-10 space-y-8 overflow-y-auto max-h-[80vh] scrollbar-hide">
-          <div className="flex items-center justify-between">
-            <h2 className="text-3xl font-black">{initialTask ? 'タスクの編集' : parentId ? 'サブタスクの追加' : 'プロジェクト・タスクの追加'}</h2>
+        <div className="p-5 sm:p-10 space-y-6 sm:space-y-8 overflow-y-auto max-h-[85dvh] sm:max-h-[80vh] scrollbar-hide">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="text-xl sm:text-3xl font-black leading-tight">{initialTask ? 'タスクの編集' : parentId ? 'サブタスクの追加' : 'プロジェクト・タスクの追加'}</h2>
             <button onClick={onClose} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-all border border-slate-200"><X size={24} /></button>
           </div>
 
@@ -2443,35 +2458,35 @@ function MemberDetailModal({ member, tasks, onClose, onImageClick, expansionSign
   const availableCategoriesForDisplay = availableCategories;
 
   return (
-     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/80 backdrop-blur-md" onClick={onClose}>
+     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-900/80 backdrop-blur-md" onClick={onClose}>
         <motion.div 
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 20, opacity: 0 }}
           onClick={e => e.stopPropagation()}
-          className="bg-slate-50 w-full max-w-6xl h-[90vh] rounded-[48px] shadow-2xl overflow-hidden flex flex-col font-sans relative"
+          className="bg-slate-50 w-full max-w-6xl h-[95dvh] sm:h-[90vh] rounded-t-[32px] sm:rounded-[48px] shadow-2xl overflow-hidden flex flex-col font-sans relative"
         >
           {/* Close button - Fixed position */}
-          <button onClick={onClose} className="absolute top-6 right-6 p-3 bg-white/20 backdrop-blur-md text-white rounded-2xl hover:bg-white/30 transition-all z-30 border border-white/20 shadow-xl">
+          <button onClick={onClose} className="absolute top-4 right-4 sm:top-6 sm:right-6 p-3 bg-white/20 backdrop-blur-md text-white rounded-2xl hover:bg-white/30 transition-all z-30 border border-white/20 shadow-xl">
              <X size={24} />
           </button>
 
           <div className="flex-1 overflow-y-auto scrollbar-hide">
              {/* Profile Header - Scrolls with content */}
-             <div className="relative h-64 bg-indigo-600">
+             <div className="relative h-48 md:h-64 bg-indigo-600">
                 {member.backgroundImageUrl && (
                   <img src={member.backgroundImageUrl} className="w-full h-full object-cover opacity-40" alt="" referrerPolicy="no-referrer" />
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-50 via-transparent to-transparent"></div>
                 
-                <div className="absolute -bottom-6 left-12 flex items-end gap-8">
-                   <div className="w-40 h-40 rounded-[48px] bg-white p-3 shadow-2xl ring-1 ring-slate-100">
-                      <div className="w-full h-full rounded-[40px] overflow-hidden bg-slate-100">
+                <div className="absolute -bottom-10 md:-bottom-6 left-4 md:left-12 flex items-end gap-4 md:gap-8 max-w-[calc(100%-32px)]">
+                   <div className="w-24 h-24 md:w-40 md:h-40 shrink-0 rounded-[32px] md:rounded-[48px] bg-white p-2 md:p-3 shadow-2xl ring-1 ring-slate-100">
+                      <div className="w-full h-full rounded-[24px] md:rounded-[40px] overflow-hidden bg-slate-100">
                          <img src={member.avatarUrl || member.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
                       </div>
                    </div>
-                   <div className="mb-8">
-                      <h2 className="text-5xl font-black text-white drop-shadow-lg">{member.displayName}</h2>
+                   <div className="mb-6 md:mb-8 flex-1 min-w-0">
+                      <h2 className="text-3xl md:text-5xl font-black text-white drop-shadow-lg truncate">{member.displayName}</h2>
                       <div className="flex items-center gap-3 mt-3">
                          <span className="px-4 py-1.5 bg-indigo-500 text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-indigo-500/20 text-center">チームメンバー</span>
                          <span className="text-white font-bold opacity-80 text-sm whitespace-nowrap">ID: {member.slackUid}</span>
@@ -2481,11 +2496,11 @@ function MemberDetailModal({ member, tasks, onClose, onImageClick, expansionSign
              </div>
 
              {/* Stats and Tasks Area */}
-             <div className="px-12 pt-20 space-y-12">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                   <div className="p-8 bg-white rounded-[40px] border border-slate-100 shadow-sm flex flex-col justify-center items-center text-center gap-2">
+             <div className="p-4 md:p-8 pt-16 md:pt-16 space-y-12">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                   <div className="p-6 md:p-8 bg-white rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-sm flex flex-col justify-center items-center text-center gap-2">
                       <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">集中スコア</div>
-                      <div className="text-4xl font-black text-indigo-600">{focusScore}</div>
+                      <div className="text-2xl md:text-4xl font-black text-indigo-600">{focusScore}</div>
                       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-2">
                          <div className="h-full bg-indigo-500" style={{ width: `${focusScore}%` }}></div>
                       </div>
@@ -2988,17 +3003,17 @@ function CalendarView({ tasks, onDayClick }: { tasks: Task[], onDayClick: (date:
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-black text-white">{format(currentDate, 'yyyy年 M月')}</h2>
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-xl sm:text-2xl font-black text-white">{format(currentDate, 'yyyy年 M月')}</h2>
+        <div className="flex gap-2 self-start sm:self-auto">
            <button onClick={prevMonth} className="px-4 py-2 bg-white/10 text-white rounded-xl shadow hover:bg-white/20 transition-all border border-white/10 text-xs font-bold">先月</button>
            <button onClick={nextMonth} className="px-4 py-2 bg-white/10 text-white rounded-xl shadow hover:bg-white/20 transition-all border border-white/10 text-xs font-bold">次月</button>
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-4">
+      <div className="grid grid-cols-7 gap-1 md:gap-4">
         {['日', '月', '火', '水', '木', '金', '土'].map(d => (
-          <div key={d} className="text-center text-[10px] font-black text-slate-400 uppercase tracking-widest py-2">
+          <div key={d} className="text-center text-[8px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest py-1 sm:py-2">
             {d}
           </div>
         ))}
@@ -3024,7 +3039,7 @@ function DayCell({ day, dayTasks, onDayClick }: { day: Date, dayTasks: Task[], o
         whileHover={{ y: -4 }}
         onClick={() => onDayClick(day)}
         className={cn(
-          "min-h-[120px] bg-white/80 backdrop-blur rounded-2xl p-3 border transition-all flex flex-col cursor-pointer group relative",
+          "min-h-[72px] sm:min-h-[96px] md:min-h-[120px] bg-white/80 backdrop-blur rounded-xl sm:rounded-2xl p-1.5 sm:p-3 border transition-all flex flex-col cursor-pointer group relative",
           isSameDay(day, new Date()) ? "border-indigo-500 ring-2 ring-indigo-500/10 shadow-lg" : "border-slate-200 hover:border-indigo-400"
         )}
       >
@@ -3160,10 +3175,15 @@ function MessagesView({
     }
   };
 
+  const showMobileThread = selectedThread !== null;
+
   return (
-    <div className="max-w-5xl mx-auto h-[75vh] bg-white/95 backdrop-blur rounded-[40px] shadow-2xl flex border border-white/20 overflow-hidden">
+    <div className="max-w-5xl mx-auto h-[calc(100dvh-10rem)] min-h-[400px] sm:h-[75vh] bg-white/95 backdrop-blur rounded-2xl sm:rounded-[40px] shadow-2xl flex flex-col lg:flex-row border border-white/20 overflow-hidden">
        {/* Sidebar */}
-       <div className="w-80 border-r border-slate-100 flex flex-col">
+       <div className={cn(
+         "w-full lg:w-80 border-b lg:border-b-0 lg:border-r border-slate-100 flex flex-col shrink-0 min-h-0",
+         showMobileThread ? "hidden lg:flex" : "flex flex-1 lg:flex-none"
+       )}>
           <div className="p-6 border-b border-slate-50">
              <h2 className="text-xl font-black mb-4 px-2">メッセージ</h2>
              <div className="relative">
@@ -3204,11 +3224,22 @@ function MessagesView({
        </div>
 
        {/* Thread */}
-       <div className="flex-1 flex flex-col relative bg-slate-50/20">
+       <div className={cn(
+         "flex-1 flex flex-col relative bg-slate-50/20 min-h-0 min-w-0",
+         !showMobileThread ? "hidden lg:flex" : "flex"
+       )}>
           {selectedThread ? (
              <>
-                <div className="p-6 bg-white/50 backdrop-blur-md border-b border-slate-50 flex items-center justify-between shadow-sm">
-                   <div className="flex items-center gap-4">
+                <div className="p-4 sm:p-6 bg-white/50 backdrop-blur-md border-b border-slate-50 flex items-center justify-between gap-2 shadow-sm">
+                   <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedThread(null)}
+                        className="lg:hidden p-2 -ml-1 text-slate-500 hover:bg-slate-100 rounded-xl shrink-0"
+                        aria-label="メンバー一覧に戻る"
+                      >
+                        <ChevronRight size={20} className="rotate-180" />
+                      </button>
                       <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center text-white font-black text-lg shadow-inner overflow-hidden">
                         {(selectedThread.avatarUrl || selectedThread.backgroundImageUrl) ? (
                            <img src={selectedThread.avatarUrl || selectedThread.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
@@ -3224,14 +3255,15 @@ function MessagesView({
                    </div>
                    <button 
                      onClick={() => setShowTaskPicker(!showTaskPicker)}
-                     className="p-3 text-indigo-600 bg-indigo-50 rounded-2xl hover:bg-indigo-100 transition-all border border-indigo-100 flex items-center gap-2 text-xs font-black"
+                     className="p-2.5 sm:p-3 text-indigo-600 bg-indigo-50 rounded-2xl hover:bg-indigo-100 transition-all border border-indigo-100 flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs font-black shrink-0"
                    >
                      <Plus size={18} />
-                     タスクを送る
+                     <span className="hidden sm:inline">タスクを送る</span>
+                     <span className="sm:hidden">送る</span>
                    </button>
                 </div>
                 
-                <div className="flex-1 p-8 overflow-y-auto space-y-6 scrollbar-hide">
+                <div className="flex-1 p-4 sm:p-8 overflow-y-auto space-y-6 scrollbar-hide min-h-0">
                    <div className="flex justify-start">
                       <div className="max-w-[75%] p-5 bg-white shadow-sm border border-slate-100 rounded-[32px] rounded-tl-none text-sm font-medium text-slate-600 leading-relaxed shadow-indigo-100/10">
                         こんにちは！お疲れ様です。今日の進捗状況はいかがでしょうか？
@@ -3290,7 +3322,7 @@ function MessagesView({
                         initial={{ y: 20, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         exit={{ y: 20, opacity: 0 }}
-                        className="absolute bottom-24 left-6 right-6 p-8 bg-white/95 backdrop-blur-xl rounded-[40px] shadow-2xl border border-slate-100 z-50 max-h-[60%] flex flex-col"
+                        className="absolute bottom-20 left-3 right-3 sm:bottom-24 sm:left-6 sm:right-6 p-5 sm:p-8 bg-white/95 backdrop-blur-xl rounded-[28px] sm:rounded-[40px] shadow-2xl border border-slate-100 z-50 max-h-[60%] flex flex-col"
                       >
                        <div className="flex items-center justify-between mb-6">
                           <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">共有するタスクを選択</h3>
@@ -3327,11 +3359,11 @@ function MessagesView({
                   )}
                 </AnimatePresence>
 
-                <div className="p-6 bg-white/50 backdrop-blur-md border-t border-slate-50">
+                <div className="p-4 sm:p-6 bg-white/50 backdrop-blur-md border-t border-slate-50 shrink-0">
                    <form onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }} className="flex gap-2">
                        <input 
                          type="text" 
-                         className="flex-1 bg-white/80 border border-slate-100 rounded-2xl px-6 py-5 outline-none focus:ring-4 focus:ring-indigo-100 text-sm font-bold transition-all shadow-inner" 
+                         className="flex-1 min-w-0 bg-white/80 border border-slate-100 rounded-2xl px-4 sm:px-6 py-3 sm:py-5 outline-none focus:ring-4 focus:ring-indigo-100 text-sm font-bold transition-all shadow-inner" 
                          placeholder="メッセージを入力..."
                          value={msgInput}
                          onChange={e => setMsgInput(e.target.value)}

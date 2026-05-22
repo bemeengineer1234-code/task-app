@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "setup:deploy": "powershell -ExecutionPolicy Bypass -File scripts/setup-deploy.ps1"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
