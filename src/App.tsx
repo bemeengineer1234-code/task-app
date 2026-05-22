@@ -432,6 +432,9 @@ export default function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toasts, setToasts] = useState<{id: string, message: string}[]>([]);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const prevMessageIdsRef = useRef<Set<string>>(new Set());
+  const isFirstMessageLoad = useRef(true);
 
   const showToast = (message: string) => {
     const id = Math.random().toString(36).substring(2);
@@ -553,6 +556,56 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 新着メッセージ検知・通知
+  useEffect(() => {
+    const myId = normalizeEmail(userProfile.id);
+    const currentIds = new Set(chatMessages.map(m => m.id));
+
+    if (isFirstMessageLoad.current) {
+      isFirstMessageLoad.current = false;
+      prevMessageIdsRef.current = currentIds;
+      return;
+    }
+
+    const newMsgs = chatMessages.filter(m =>
+      !prevMessageIdsRef.current.has(m.id) &&
+      normalizeEmail(m.receiverId) === myId &&
+      normalizeEmail(m.senderId) !== myId
+    );
+
+    if (newMsgs.length > 0) {
+      const sender = members.find(mem => normalizeEmail(mem.id) === normalizeEmail(newMsgs[0].senderId));
+      const senderName = sender?.displayName || '誰か';
+      const preview = newMsgs[0].text ? newMsgs[0].text.slice(0, 20) : 'タスクを共有しました';
+      showToast(`💬 ${senderName}: ${preview}`);
+      if (activeTab !== 'messages') {
+        setUnreadMessageCount(prev => prev + newMsgs.length);
+      }
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('SyncTask メッセージ', {
+          body: `${senderName}: ${preview}`,
+          icon: '/favicon.ico'
+        });
+      }
+    }
+
+    prevMessageIdsRef.current = currentIds;
+  }, [chatMessages]);
+
+  // メッセージタブを開いたら未読をリセット
+  useEffect(() => {
+    if (activeTab === 'messages') {
+      setUnreadMessageCount(0);
+    }
+  }, [activeTab]);
+
+  // ブラウザ通知の許可リクエスト（初回ログイン後）
+  useEffect(() => {
+    if (isLoggedIn && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [isLoggedIn]);
 
   // 新規アサインタスクの通知検知
   const [prevTaskIds, setPrevTaskIds] = useState<string[]>([]);
@@ -770,11 +823,12 @@ export default function App() {
     const startedAt = new Date();
     const updatedTask = { ...task, status: 'doing' as const, startPhoto: photoUrl, updatedAt: startedAt, startedAt };
     setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
-    await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: startedAt, startedAt });
     setTimerSeconds(task.estimatedMinutes * 60);
     setShowPhotoModal(false);
     setPendingStartTaskId(null);
+    setActiveTab('dashboard');
     addNotification('start', task.title);
+    await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: startedAt, startedAt });
   };
 
   const [expansionSignals, setExpansionSignals] = useState<Record<string, number>>({});
@@ -977,13 +1031,14 @@ export default function App() {
     <div className="min-h-screen font-sans text-slate-800 bg-slate-50">
       <div className="min-h-screen flex overflow-x-hidden bg-white">
         
-        <Sidebar 
+        <Sidebar
           sidebarOpen={sidebarOpen}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           userProfile={userProfile}
           onLogout={handleLogout}
           onClose={() => setSidebarOpen(false)}
+          unreadMessageCount={unreadMessageCount}
         />
 
         {sidebarOpen && (
@@ -1387,8 +1442,8 @@ export default function App() {
                           アプリのURLを共有し、それぞれのメールアドレスでログインしてもらうとここに表示されます。
                         </p>
                       </div>
-                    ) : memberProgress.map((progressItem, idx) => (
-                        <div key={idx} className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
+                    ) : memberProgress.map((progressItem) => (
+                        <div key={progressItem.userId} className="bg-white p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm border border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 transition-all hover:shadow-md cursor-pointer" onClick={() => { setSelectedMemberId(progressItem.userId); setShowMemberDetail(true); }}>
                           <div className="flex items-center gap-4 flex-1 min-w-0">
                              <div className={cn(
                                 "w-12 h-12 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm shrink-0",
@@ -1796,6 +1851,7 @@ interface SidebarItemProps {
   label: string;
   active?: boolean;
   onClick?: () => void;
+  badge?: number;
 }
 
 interface SidebarProps {
@@ -1805,9 +1861,10 @@ interface SidebarProps {
   userProfile: UserProfile;
   onLogout: () => void;
   onClose: () => void;
+  unreadMessageCount: number;
 }
 
-function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, onClose }: SidebarProps) {
+function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, onClose, unreadMessageCount }: SidebarProps) {
   return (
     <aside className={cn(
       "fixed inset-y-0 left-0 z-40 w-64 bg-white/90 backdrop-blur-md border-r border-slate-200 transition-transform duration-300 transform lg:translate-x-0 shadow-2xl lg:shadow-none",
@@ -1828,7 +1885,7 @@ function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, 
           <SidebarItem icon={<LayoutDashboard size={20} />} label="ホーム" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); onClose(); }} />
           <SidebarItem icon={<User size={20} />} label="メンバー進捗" active={activeTab === 'members'} onClick={() => { setActiveTab('members'); onClose(); }} />
           <SidebarItem icon={<CalendarIcon size={20} />} label="記録・カレンダー" active={activeTab === 'calendar'} onClick={() => { setActiveTab('calendar'); onClose(); }} />
-          <SidebarItem icon={<MessageSquare size={20} />} label="メッセージ" active={activeTab === 'messages'} onClick={() => { setActiveTab('messages'); onClose(); }} />
+          <SidebarItem icon={<MessageSquare size={20} />} label="メッセージ" active={activeTab === 'messages'} badge={unreadMessageCount} onClick={() => { setActiveTab('messages'); onClose(); }} />
           <SidebarItem icon={<Settings size={20} />} label="設定" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); onClose(); }} />
         </nav>
 
@@ -1857,14 +1914,14 @@ function Sidebar({ sidebarOpen, activeTab, setActiveTab, userProfile, onLogout, 
   );
 }
 
-function SidebarItem({ icon, label, active, onClick }: SidebarItemProps) {
+function SidebarItem({ icon, label, active, onClick, badge }: SidebarItemProps) {
   return (
-    <button 
+    <button
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all group",
-        active 
-          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200" 
+        active
+          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
           : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
       )}
     >
@@ -1872,6 +1929,11 @@ function SidebarItem({ icon, label, active, onClick }: SidebarItemProps) {
         {icon}
       </span>
       {label}
+      {!!badge && badge > 0 && (
+        <span className="ml-auto bg-red-500 text-white text-[10px] font-black rounded-full min-w-[20px] h-5 flex items-center justify-center px-1 leading-none">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 }
