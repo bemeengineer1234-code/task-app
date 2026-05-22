@@ -1421,7 +1421,10 @@ export default function App() {
                      showToast('メッセージの送信に失敗しました');
                    });
                  }}
-                 onDeleteMessage={deleteMessageFromFirestore}
+                 onDeleteMessage={(id) => {
+                   setChatMessages(prev => prev.filter(m => m.id !== id));
+                   deleteMessageFromFirestore(id);
+                 }}
                />
             )}
 
@@ -1433,6 +1436,84 @@ export default function App() {
                       {members.length}人が登録済み（ログインした全員が表示されます）
                     </p>
                   </div>
+
+                  {/* 実行中メンバー バナー */}
+                  {memberProgress.some(p => p.status === 'doing') && (
+                    <div className="space-y-3">
+                      <p className="text-xs font-black text-indigo-500 uppercase tracking-widest px-1 flex items-center gap-1.5">
+                        <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse inline-block" />
+                        集中中のメンバー
+                      </p>
+                      {memberProgress.filter(p => p.status === 'doing').map(p => {
+                        const elapsed = p.elapsedMinutes;
+                        const elapsedSec = elapsed * 60 + progressTick % 60;
+                        const displayMin = Math.floor(elapsedSec / 60);
+                        const displaySec = elapsedSec % 60;
+                        return (
+                          <motion.div
+                            key={p.userId}
+                            initial={{ y: -8, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            className="bg-white border border-indigo-200 border-l-4 border-l-indigo-500 rounded-2xl p-4 sm:p-5 shadow-sm cursor-pointer hover:shadow-md transition-all"
+                            onClick={() => { setSelectedMemberId(p.userId); setShowMemberDetail(true); }}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="w-10 h-10 rounded-full overflow-hidden bg-indigo-100 flex items-center justify-center text-sm font-bold ring-2 ring-indigo-400 shrink-0">
+                                  {(p.member.avatarUrl || p.member.backgroundImageUrl) ? (
+                                    <img src={p.member.avatarUrl || p.member.backgroundImageUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                                  ) : p.member.displayName[0]}
+                                </div>
+                                {p.startPhoto && (
+                                  <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-indigo-100 shrink-0 cursor-zoom-in" onClick={e => { e.stopPropagation(); setPreviewImage(p.startPhoto!); }}>
+                                    <img src={p.startPhoto} className="w-full h-full object-cover" alt="" />
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1 space-y-0.5">
+                                  <p className="text-xs font-semibold text-indigo-600 flex items-center gap-1">
+                                    <Clock size={12} />
+                                    {p.member.displayName} が集中中
+                                  </p>
+                                  <h3 className="text-base font-bold text-slate-900 truncate">{p.taskTitle}</h3>
+                                  {p.activeTask && (
+                                    <span className="inline-block text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">{p.activeTask.category}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <div className="text-2xl font-mono font-bold text-indigo-700 tabular-nums">
+                                  {String(displayMin).padStart(2, '0')}:{String(displaySec).padStart(2, '0')}
+                                </div>
+                                <motion.button
+                                  whileTap={{ scale: 0.9 }}
+                                  onClick={e => { e.stopPropagation(); handleReaction(p.userId); }}
+                                  className={cn(
+                                    "p-3 rounded-2xl transition-all flex flex-col items-center gap-1 min-w-[56px]",
+                                    reactionSent[p.userId] ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
+                                  )}
+                                >
+                                  <ThumbsUp size={16} className={cn(reactionSent[p.userId] && "animate-bounce")} />
+                                  <span className="text-[9px] font-black italic">Fight!</span>
+                                </motion.button>
+                              </div>
+                            </div>
+                            <div className="mt-3 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${p.progress}%` }}
+                                className="h-full bg-indigo-500 transition-all"
+                              />
+                            </div>
+                            <div className="mt-1 flex justify-between text-[10px] text-slate-400 font-medium">
+                              <span>経過 {displayMin}分</span>
+                              {p.activeTask && <span>目安 {p.activeTask.estimatedMinutes}分</span>}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div className="space-y-4 px-2">
                     {memberProgress.length === 0 ? (
                       <div className="py-16 text-center rounded-2xl border border-dashed border-slate-200 bg-white">
@@ -3061,10 +3142,16 @@ function MessagesView({
   const [search, setSearch] = useState('');
   const [msgInput, setMsgInput] = useState('');
   const [showTaskPicker, setShowTaskPicker] = useState(false);
-  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   const sortedMembers = useMemo(() => {
     return [...members].filter(m => m.id !== currentUser.id).sort((a,b) => a.displayName.localeCompare(b.displayName));
   }, [members, currentUser]);
+
+  // 新しいメッセージが来たら一番下にスクロール
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [globalMessages, selectedThread]);
 
   const filteredMembers = sortedMembers.filter(m => m.displayName.toLowerCase().includes(search.toLowerCase()));
 
@@ -3107,7 +3194,7 @@ function MessagesView({
   const showMobileThread = selectedThread !== null;
 
   return (
-    <div className="max-w-5xl mx-auto h-[calc(100dvh-10rem)] min-h-[400px] sm:h-[75vh] bg-white/95 backdrop-blur rounded-2xl sm:rounded-[40px] shadow-2xl flex flex-col lg:flex-row border border-white/20 overflow-hidden">
+    <div className="max-w-5xl mx-auto h-[calc(100svh-8rem)] min-h-[400px] bg-white/95 backdrop-blur rounded-2xl sm:rounded-[40px] shadow-2xl flex flex-col lg:flex-row border border-white/20 overflow-hidden">
        {/* Sidebar */}
        <div className={cn(
          "w-full lg:w-80 border-b lg:border-b-0 lg:border-r border-slate-100 flex flex-col shrink-0 min-h-0",
@@ -3262,6 +3349,7 @@ function MessagesView({
                         )}
                       </div>
                    );})}
+                   <div ref={messagesEndRef} />
                 </div>
 
                 <AnimatePresence>
