@@ -78,6 +78,7 @@ interface Task {
   startPhoto?: string;
   dueDate: Date;
   updatedAt: Date;
+  fights?: { senderId: string, timestamp: number }[];
 }
 
 interface Notification {
@@ -261,7 +262,7 @@ function createUserProfile(email: string, avatarUrl?: string, slackUid?: string)
     id: email,
     displayName,
     slackUid: slackUid || displayName,
-    backgroundImageUrl: avatarUrl || '',
+    backgroundImageUrl: '',
     avatarUrl,
     currentStreak: 0,
     badges: [],
@@ -441,12 +442,29 @@ export default function App() {
     if (newTasks.length > 0) {
       newTasks.forEach(t => {
         if (t.userId === userProfile.id && t.assignedBy && t.assignedBy !== userProfile.id) {
-          addNotification('assigned', `タスク「${t.title}」が送られてきました`);
+          const sender = members.find(m => m.id === t.assignedBy);
+          addNotification('assigned', `タスク「${t.title}」が ${sender?.displayName || '誰か'} さんから送られました`);
         }
       });
       setPrevTaskIds(tasks.map(t => t.id));
     }
-  }, [tasks, userProfile.id, prevTaskIds]);
+  }, [tasks, userProfile.id, prevTaskIds, members]);
+
+  // FIGHTの通知と検出
+  const prevFights = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const activeTasks = tasks.filter(t => t.userId === userProfile.id && t.status === 'doing');
+    activeTasks.forEach(task => {
+      const currentLen = task.fights?.length || 0;
+      const prevLen = prevFights.current[task.id] || 0;
+      if (currentLen > prevLen && currentLen > 0) {
+        const newFight = task.fights![currentLen - 1];
+        const sender = members.find(m => m.id === newFight.senderId);
+        addNotification('fight', `${sender?.displayName || '誰か'} さんからFIGHTされました！`);
+      }
+      prevFights.current[task.id] = currentLen;
+    });
+  }, [tasks, userProfile.id, members]);
 
   // メンバー情報から自身のfightCount等を同期
   useEffect(() => {
@@ -619,13 +637,18 @@ export default function App() {
 
   const handleReaction = async (userId: string) => {
     setReactionSent(prev => ({ ...prev, [userId]: true }));
-    // addNotification('fight', ''); // 通知リストにのみ追加され、Slackやトーストには出ない
     setTimeout(() => {
       setReactionSent(prev => ({ ...prev, [userId]: false }));
     }, 1500);
 
     const targetMember = members.find(m => m.id === userId);
     if (targetMember) {
+      const activeTask = tasks.find(t => t.userId === userId && t.status === 'doing');
+      if (activeTask) {
+         const newFights = [...(activeTask.fights || []), { senderId: userProfile.id, timestamp: Date.now() }];
+         await updateTaskInFirestore(activeTask.id, { fights: newFights });
+      }
+
       const newCount = (targetMember.fightCount || 0) + 1;
       await saveMemberToFirestore({ ...targetMember, fightCount: newCount });
     }
@@ -789,7 +812,7 @@ export default function App() {
 
   return (
     <div 
-      className="min-h-screen font-sans text-slate-800 bg-fixed bg-cover bg-center transition-all duration-700"
+      className="min-h-screen font-sans text-slate-800 bg-fixed bg-cover bg-center transition-all duration-700 bg-white"
       style={{ backgroundImage: userProfile.backgroundImageUrl ? `url(${userProfile.backgroundImageUrl})` : 'none' }}
     >
       <div className={cn("min-h-screen flex overflow-hidden", themeConfigs[theme])}>
@@ -1225,7 +1248,6 @@ export default function App() {
                    };
                    setTasks(prev => prev.map(t => t.id === task.id ? updatedTask : t));
                    await updateTaskInFirestore(task.id, updatedTask);
-                   addNotification('assigned', `タスク「${task.title}」をアサインしました`);
                  }}
                  globalMessages={chatMessages}
                  onSendMessage={saveMessageToFirestore}
@@ -2129,6 +2151,11 @@ function TaskCard({
                {task.status === 'done' && task.actualMinutes !== undefined && (
                  <span className="text-emerald-500 flex items-center gap-1">
                    <Clock size={9} /> 実績: {task.actualMinutes}分
+                 </span>
+               )}
+               {task.status === 'doing' && task.fights && task.fights.length > 0 && (
+                 <span className="text-rose-500 flex items-center gap-1" title={`${task.fights.length} FIGHTs!`}>
+                   <ThumbsUp size={9} /> {task.fights.length}
                  </span>
                )}
             </div>
