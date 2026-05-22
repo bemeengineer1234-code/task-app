@@ -942,6 +942,11 @@ export default function App() {
                            <div className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded text-xs font-bold uppercase">
                              {activeTask.category}
                            </div>
+                           {activeTask.fights && activeTask.fights.length > 0 && (
+                             <div className="px-2 py-0.5 bg-rose-500/20 text-rose-400 rounded text-xs font-bold uppercase flex items-center gap-1 shadow-lg shadow-rose-500/20">
+                               <ThumbsUp size={12} /> {activeTask.fights.length} FIGHTs!
+                             </div>
+                           )}
                         </div>
                       </div>
 
@@ -1250,7 +1255,10 @@ export default function App() {
                    await updateTaskInFirestore(task.id, updatedTask);
                  }}
                  globalMessages={chatMessages}
-                 onSendMessage={saveMessageToFirestore}
+                 onSendMessage={(msg) => {
+                   setChatMessages(prev => [...prev, msg].sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime()));
+                   saveMessageToFirestore(msg);
+                 }}
                  onDeleteMessage={deleteMessageFromFirestore}
                />
             )}
@@ -3313,8 +3321,10 @@ function MessagesView({
                     selectedThread?.id === m.id ? "bg-indigo-600 text-white shadow-xl shadow-indigo-100" : "hover:bg-slate-50 text-slate-800"
                   )}
                 >
-                   <div className={cn("w-12 h-12 rounded-full flex items-center justify-center font-black text-sm shrink-0", selectedThread?.id === m.id ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-500 border border-indigo-100")}>
-                      {m.displayName[0]}
+                   <div className={cn("w-12 h-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 overflow-hidden", selectedThread?.id === m.id ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-500 border border-indigo-100")}>
+                      {(m.avatarUrl || m.backgroundImageUrl) ? (
+                        <img src={m.avatarUrl || m.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
+                      ) : m.displayName[0]}
                    </div>
                    <div className="text-left min-w-0 flex-1">
                       <div className="text-sm font-black truncate leading-none">{m.displayName}</div>
@@ -3333,7 +3343,11 @@ function MessagesView({
              <>
                 <div className="p-6 bg-white/50 backdrop-blur-md border-b border-slate-50 flex items-center justify-between shadow-sm">
                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center text-white font-black text-lg shadow-inner">{selectedThread.displayName[0]}</div>
+                      <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center text-white font-black text-lg shadow-inner overflow-hidden">
+                        {(selectedThread.avatarUrl || selectedThread.backgroundImageUrl) ? (
+                           <img src={selectedThread.avatarUrl || selectedThread.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
+                        ) : selectedThread.displayName[0]}
+                      </div>
                       <div>
                          <div className="text-sm font-black">{selectedThread.displayName}</div>
                          <div className="text-[10px] text-green-500 font-black tracking-widest flex items-center gap-1.5 uppercase">
@@ -3359,8 +3373,15 @@ function MessagesView({
                    </div>
 
                    {getThreadMessages(selectedThread.id).map((msg, i) => (
-                      <div key={msg.id || i} className={cn("flex group/msg", msg.senderId === currentUser.id ? "justify-end" : "justify-start")}>
-                        <div className="relative">
+                      <div key={msg.id || i} className={cn("flex group/msg gap-3 items-end", msg.senderId === currentUser.id ? "justify-end" : "justify-start")}>
+                        {msg.senderId !== currentUser.id && (
+                           <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500 font-bold text-xs shrink-0 overflow-hidden shadow-inner">
+                              {(selectedThread.avatarUrl || selectedThread.backgroundImageUrl) ? (
+                                <img src={selectedThread.avatarUrl || selectedThread.backgroundImageUrl} className="w-full h-full object-cover" alt="" />
+                              ) : selectedThread.displayName[0]}
+                           </div>
+                        )}
+                        <div className="relative max-w-[75%]">
                           {msg.senderId === currentUser.id && (
                             <button 
                               onClick={() => onDeleteMessage(msg.id)}
@@ -3371,7 +3392,7 @@ function MessagesView({
                             </button>
                           )}
                           <div className={cn(
-                            "max-w-[75%] p-5 rounded-[32px] flex flex-col gap-4 shadow-xl",
+                            "p-5 rounded-[32px] flex flex-col gap-4 shadow-xl",
                             msg.senderId === currentUser.id ? "bg-indigo-600 text-white rounded-tr-none shadow-indigo-200/40" : "bg-white border border-slate-100 text-slate-700 rounded-tl-none shadow-indigo-100/10"
                           )}>
                             <div className="text-sm font-bold leading-relaxed">{msg.text}</div>
