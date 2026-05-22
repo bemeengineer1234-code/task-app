@@ -90,7 +90,9 @@ interface Notification {
 }
 
 interface ChatMessage {
+  id: string;
   senderId: string;
+  receiverId: string;
   text: string;
   timestamp: Date;
   relatedTaskId?: string;
@@ -119,6 +121,7 @@ const INITIAL_TASKS: Task[] = [];
 
 const TASKS_COLLECTION = 'tasks';
 const MEMBERS_COLLECTION = 'members';
+const MESSAGES_COLLECTION = 'chatMessages';
 const IS_FIRESTORE_CONFIGURED = Boolean(
   import.meta.env.VITE_FIREBASE_API_KEY &&
   import.meta.env.VITE_FIREBASE_AUTH_DOMAIN &&
@@ -231,6 +234,27 @@ async function saveMemberToFirestore(member: UserProfile) {
   }
 }
 
+async function saveMessageToFirestore(msg: ChatMessage) {
+  if (!db) return;
+  try {
+    await setDoc(doc(db, MESSAGES_COLLECTION, msg.id), {
+      ...msg,
+      timestamp: msg.timestamp
+    });
+  } catch (error) {
+    console.error('Firestore save message failed:', error);
+  }
+}
+
+async function deleteMessageFromFirestore(msgId: string) {
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, MESSAGES_COLLECTION, msgId));
+  } catch (error) {
+    console.error('Firestore delete message failed:', error);
+  }
+}
+
 function createUserProfile(email: string, avatarUrl?: string, slackUid?: string): UserProfile {
   const displayName = email.split('@')[0];
   return {
@@ -278,6 +302,7 @@ export default function App() {
   });
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   // `isLocked` と `activeTaskId` は `useState` ではなく `currentUserTasks` から導出する（後述）
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [theme, setTheme] = useState<AppTheme>('default');
   const [timerSeconds, setTimerSeconds] = useState(2700); // 45 mins
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -339,17 +364,25 @@ export default function App() {
   }, [currentUserTasks]);
 
   const memberProgress = useMemo(() => {
-    return members.map(member => {
+    const list = members.map(member => {
       const activeTask = tasks.find(t => t.userId === member.id && t.status === 'doing');
       const pendingTasks = tasks.filter(t => t.userId === member.id && t.status !== 'done');
       return {
         userId: member.id,
         member,
-        taskTitle: activeTask ? activeTask.title : pendingTasks[0]?.title || 'タスクがありません',
+        taskTitle: activeTask ? activeTask.title : '',
         status: activeTask ? 'doing' : pendingTasks.length ? 'waiting' : 'none',
-        progress: activeTask ? 60 + Math.min(40, pendingTasks.length * 10) : pendingTasks.length ? 30 : 0,
+        progress: activeTask ? 60 + Math.min(40, pendingTasks.length * 10) : 0,
         startPhoto: activeTask?.startPhoto
       };
+    });
+
+    return list.sort((a, b) => {
+      if (a.status === 'doing' && b.status !== 'doing') return -1;
+      if (a.status !== 'doing' && b.status === 'doing') return 1;
+      if (a.status === 'none' && b.status !== 'none') return 1;
+      if (a.status !== 'none' && b.status === 'none') return -1;
+      return 0;
     });
   }, [members, tasks]);
 
@@ -376,6 +409,44 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !IS_FIRESTORE_CONFIGURED || !db) return;
+    const messagesQuery = query(collection(db, MESSAGES_COLLECTION));
+    const unsubscribe = onSnapshot(messagesQuery, snapshot => {
+      const loadedMessages = snapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data();
+        return {
+          ...data,
+          id: docSnapshot.id,
+          timestamp: normalizeFirestoreDate(data.timestamp)
+        } as ChatMessage;
+      });
+      setChatMessages(loadedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()));
+    }, (error) => {
+      console.error('Firestore messages snapshot failed:', error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 新規アサインタスクの通知検知
+  const [prevTaskIds, setPrevTaskIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (tasks.length === 0) return;
+    if (prevTaskIds.length === 0) {
+      setPrevTaskIds(tasks.map(t => t.id));
+      return;
+    }
+    const newTasks = tasks.filter(t => !prevTaskIds.includes(t.id));
+    if (newTasks.length > 0) {
+      newTasks.forEach(t => {
+        if (t.userId === userProfile.id && t.assignedBy && t.assignedBy !== userProfile.id) {
+          addNotification('assigned', `タスク「${t.title}」が送られてきました`);
+        }
+      });
+      setPrevTaskIds(tasks.map(t => t.id));
+    }
+  }, [tasks, userProfile.id, prevTaskIds]);
 
   const handleToggleExpand = (id: string) => {
     setExpandedTaskId(prev => prev === id ? null : id);
@@ -461,9 +532,7 @@ export default function App() {
     let actionStr = '';
     if (type === 'start') actionStr = `開始しました: ${taskTitle}`;
     if (type === 'end') actionStr = `完了しました: ${taskTitle}`;
-    if (type === 'paused') actionStr = `停止しました: ${taskTitle}`;
     if (type === 'assigned') actionStr = `${taskTitle}`;
-    if (type === 'fight') actionStr = `メンバーにFIGHTを送りました！`;
     
     if (actionStr) {
       showToast(actionStr);
@@ -502,7 +571,7 @@ export default function App() {
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t));
     if (updatedTask) await updateTaskInFirestore(taskId, { status, updatedAt: new Date() });
     setShowRescueModal(false);
-    if (task) addNotification('paused', task.title);
+    if (task) addNotification('paused', task.title); // 通知リストにのみ追加され、Slackやトーストには出ない
   };
 
   const resumeTask = async (taskId: string) => {
@@ -542,7 +611,7 @@ export default function App() {
 
   const handleReaction = (userId: string) => {
     setReactionSent(prev => ({ ...prev, [userId]: true }));
-    addNotification('fight', '');
+    // addNotification('fight', ''); // 通知リストにのみ追加され、Slackやトーストには出ない
     setTimeout(() => {
       setReactionSent(prev => ({ ...prev, [userId]: false }));
     }, 1500);
@@ -1115,7 +1184,6 @@ export default function App() {
                   setEditingTask(null);
                   setTargetParentId(null);
                   setShowTaskForm(true);
-                  // We should ideally pass this date to the form as default dueDate
                 }} 
               />
             )}
@@ -1147,6 +1215,9 @@ export default function App() {
                    await saveTaskToFirestore(newTask);
                    addNotification('assigned', `タスク「${task.title}」をアサインしました`);
                  }}
+                 globalMessages={chatMessages}
+                 onSendMessage={saveMessageToFirestore}
+                 onDeleteMessage={deleteMessageFromFirestore}
                />
             )}
 
@@ -1980,8 +2051,7 @@ function TaskCard({
       className={cn(
         "group relative bg-white/95 backdrop-blur rounded-2xl border border-slate-200 hover:shadow-md cursor-pointer overflow-hidden",
         disabled && "opacity-40 grayscale pointer-events-none",
-        isNew && "ring-ring ring-2 ring-indigo-500/50",
-        task.status === 'done' && "opacity-60"
+        isNew && "ring-ring ring-2 ring-indigo-500/50"
       )}
       onClick={toggleExpand}
     >
@@ -2037,6 +2107,11 @@ function TaskCard({
                {subtasks.length > 0 && (
                  <span className="text-indigo-400 flex items-center gap-1">
                    <Layers size={9} /> {subtasks.filter(s => s.status === 'done').length}/{subtasks.length} 完了
+                 </span>
+               )}
+               {task.status === 'done' && task.updatedAt && (
+                 <span className="text-emerald-500 flex items-center gap-1">
+                   <CheckCircle2 size={9} /> {format(task.updatedAt, "MM/dd HH:mm")} 完了
                  </span>
                )}
             </div>
@@ -3108,19 +3183,29 @@ function DayCell({ day, dayTasks, onDayClick }: { day: Date, dayTasks: Task[], o
   );
 }
 
-function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTask }: { members: UserProfile[], tasks: Task[], currentUser: UserProfile, onShareNewTask: () => void, onAssignTask: (task: Task, targetUserId: string) => void }) {
+function MessagesView({ 
+  members, 
+  tasks, 
+  currentUser, 
+  onShareNewTask, 
+  onAssignTask,
+  globalMessages,
+  onSendMessage,
+  onDeleteMessage
+}: { 
+  members: UserProfile[], 
+  tasks: Task[], 
+  currentUser: UserProfile, 
+  onShareNewTask: () => void, 
+  onAssignTask: (task: Task, targetUserId: string) => void,
+  globalMessages: ChatMessage[],
+  onSendMessage: (msg: ChatMessage) => void,
+  onDeleteMessage: (id: string) => void
+}) {
   const [selectedThread, setSelectedThread] = useState<UserProfile | null>(null);
   const [search, setSearch] = useState('');
   const [msgInput, setMsgInput] = useState('');
-  const [localMessages, setLocalMessages] = useState<Record<string, ChatMessage[]>>({});
   const [showTaskPicker, setShowTaskPicker] = useState(false);
-  
-  const deleteMessage = (threadId: string, index: number) => {
-    setLocalMessages(prev => ({
-      ...prev,
-      [threadId]: prev[threadId].filter((_, i) => i !== index)
-    }));
-  };
   
   const sortedMembers = useMemo(() => {
     return [...members].filter(m => m.id !== currentUser.id).sort((a,b) => a.displayName.localeCompare(b.displayName));
@@ -3131,17 +3216,23 @@ function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTas
   const handleSendMessage = (text?: string, taskId?: string) => {
     if (!selectedThread || (!msgInput.trim() && !text && !taskId)) return;
     const newMsg: ChatMessage = {
+      id: Math.random().toString(36).substr(2, 9),
       senderId: currentUser.id,
+      receiverId: selectedThread.id,
       text: text || msgInput,
       timestamp: new Date(),
       relatedTaskId: taskId
     };
-    setLocalMessages(prev => ({
-      ...prev,
-      [selectedThread.id]: [...(prev[selectedThread.id] || []), newMsg]
-    }));
+    onSendMessage(newMsg);
     setMsgInput('');
     setShowTaskPicker(false);
+  };
+
+  const getThreadMessages = (memberId: string) => {
+    return globalMessages.filter(msg => 
+      (msg.senderId === currentUser.id && msg.receiverId === memberId) || 
+      (msg.senderId === memberId && msg.receiverId === currentUser.id)
+    );
   };
 
   const shareTask = (task: Task) => {
@@ -3150,8 +3241,6 @@ function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTas
       onAssignTask(task, selectedThread.id);
     }
   };
-
-  const [showNewTaskInChat, setShowNewTaskInChat] = useState(false);
 
   return (
     <div className="max-w-5xl mx-auto h-[75vh] bg-white/95 backdrop-blur rounded-[40px] shadow-2xl flex border border-white/20 overflow-hidden">
@@ -3183,10 +3272,10 @@ function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTas
                    <div className={cn("w-12 h-12 rounded-full flex items-center justify-center font-black text-sm shrink-0", selectedThread?.id === m.id ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-500 border border-indigo-100")}>
                       {m.displayName[0]}
                    </div>
-                   <div className="text-left min-w-0">
+                   <div className="text-left min-w-0 flex-1">
                       <div className="text-sm font-black truncate leading-none">{m.displayName}</div>
                       <div className={cn("text-[10px] mt-1.5 truncate font-medium", selectedThread?.id === m.id ? "text-indigo-100" : "text-slate-400")}>
-                        {localMessages[m.id]?.length ? localMessages[m.id].at(-1)?.text : 'メッセージを送る'}
+                        {getThreadMessages(m.id).length ? getThreadMessages(m.id).at(-1)?.text : 'メッセージを送る'}
                       </div>
                    </div>
                 </button>
@@ -3225,12 +3314,12 @@ function MessagesView({ members, tasks, currentUser, onShareNewTask, onAssignTas
                       </div>
                    </div>
 
-                   {localMessages[selectedThread.id]?.map((msg, i) => (
-                      <div key={i} className={cn("flex group/msg", msg.senderId === currentUser.id ? "justify-end" : "justify-start")}>
+                   {getThreadMessages(selectedThread.id).map((msg, i) => (
+                      <div key={msg.id || i} className={cn("flex group/msg", msg.senderId === currentUser.id ? "justify-end" : "justify-start")}>
                         <div className="relative">
                           {msg.senderId === currentUser.id && (
                             <button 
-                              onClick={() => deleteMessage(selectedThread.id, i)}
+                              onClick={() => onDeleteMessage(msg.id)}
                               className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover/msg:opacity-100 transition-all"
                               title="送信を取り消す"
                             >
