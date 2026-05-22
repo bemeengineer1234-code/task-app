@@ -319,7 +319,6 @@ export default function App() {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [pendingStartTaskId, setPendingStartTaskId] = useState<string | null>(null);
   const [reactionSent, setReactionSent] = useState<Record<string, boolean>>({});
-  const [fightCount, setFightCount] = useState(userProfile.fightCount);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toasts, setToasts] = useState<{id: string, message: string}[]>([]);
@@ -474,6 +473,21 @@ export default function App() {
     }
   }, [members, userProfile.id, userProfile.fightCount]);
 
+  // プロフィール変更時の自動保存
+  const isProfileMount = useRef(true);
+  useEffect(() => {
+    if (isProfileMount.current) {
+      isProfileMount.current = false;
+      return;
+    }
+    if (userProfile.id) {
+       const timeout = setTimeout(() => {
+         saveMemberToFirestore(userProfile);
+       }, 500);
+       return () => clearTimeout(timeout);
+    }
+  }, [userProfile.displayName, userProfile.avatarUrl, userProfile.backgroundImageUrl, userProfile.slackUid]);
+
   const handleToggleExpand = (id: string) => {
     setExpandedTaskId(prev => prev === id ? null : id);
   };
@@ -555,10 +569,13 @@ export default function App() {
     };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50));
 
+    const nowStr = format(new Date(), 'HH:mm');
     let actionStr = '';
-    if (type === 'start') actionStr = `開始しました: ${taskTitle}`;
-    if (type === 'end') actionStr = `完了しました: ${taskTitle}`;
-    if (type === 'assigned') actionStr = `${taskTitle}`;
+    if (type === 'start') actionStr = `[${nowStr}] 開始しました: ${taskTitle}`;
+    if (type === 'end') actionStr = `[${nowStr}] 完了しました: ${taskTitle}`;
+    if (type === 'assigned') actionStr = `[${nowStr}] ${taskTitle}`;
+    if (type === 'fight') actionStr = `[${nowStr}] ${taskTitle}`;
+    if (type === 'paused') actionStr = `[${nowStr}] 中断しました: ${taskTitle}`;
     
     if (actionStr) {
       showToast(actionStr);
@@ -1134,7 +1151,7 @@ export default function App() {
                         <div className="flex items-center gap-4 p-4 bg-rose-50 rounded-2xl border border-rose-100">
                            <div className="text-2xl text-rose-500"><ThumbsUp size={20} fill="currentColor" /></div>
                            <div>
-                             <div className="text-sm font-bold">{fightCount} Fight 受信</div>
+                             <div className="text-sm font-bold">{userProfile.fightCount || 0} Fight 受信</div>
                              <div className="text-xs text-slate-500">チームから応援されています！</div>
                            </div>
                         </div>
