@@ -277,8 +277,7 @@ export default function App() {
     return [];
   });
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
-  const [isLocked, setIsLocked] = useState(false);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  // `isLocked` と `activeTaskId` は `useState` ではなく `currentUserTasks` から導出する（後述）
   const [theme, setTheme] = useState<AppTheme>('default');
   const [timerSeconds, setTimerSeconds] = useState(2700); // 45 mins
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -312,6 +311,17 @@ export default function App() {
   const [availableCategories, setAvailableCategories] = useState<string[]>(['作業', '調査', '会議', '休憩', 'Design', 'Engineering', 'Marketing']);
   const [lastCreatedTaskId, setLastCreatedTaskId] = useState<string | null>(null);
 
+  const currentUserTasks = useMemo(() => {
+    return tasks.filter(t => t.userId === userProfile.id);
+  }, [tasks, userProfile.id]);
+
+  const activeTask = useMemo(() => {
+    return currentUserTasks.find(t => t.status === 'doing') || null;
+  }, [currentUserTasks]);
+
+  const activeTaskId = activeTask?.id || null;
+  const isLocked = !!activeTask;
+
   // Timer Logic
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -323,10 +333,6 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [isLocked, timerSeconds, activeTaskId, tasks]);
-
-  const currentUserTasks = useMemo(() => {
-    return tasks.filter(t => t.userId === userProfile.id);
-  }, [tasks, userProfile.id]);
 
   const allSearchableTasks = useMemo(() => {
     return currentUserTasks;
@@ -482,8 +488,6 @@ export default function App() {
     const updatedTask = { ...task, status: 'doing', startPhoto: photoUrl, updatedAt: new Date() };
     setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
     await updateTaskInFirestore(taskId, { status: 'doing', startPhoto: photoUrl, updatedAt: new Date() });
-    setActiveTaskId(taskId);
-    setIsLocked(true);
     setTimerSeconds(task.estimatedMinutes * 60);
     setShowPhotoModal(false);
     setPendingStartTaskId(null);
@@ -527,8 +531,6 @@ export default function App() {
     const task = tasks.find(t => t.id === taskId);
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'done', actualMinutes: actual, mismatchReason: reason } : t));
     await updateTaskInFirestore(taskId, { status: 'done', actualMinutes: actual, mismatchReason: reason, updatedAt: new Date() });
-    setIsLocked(false);
-    setActiveTaskId(null);
     setShowGapModal(false);
     if (task) addNotification('end', task.title);
     confetti({
@@ -664,8 +666,6 @@ export default function App() {
       (!t.dueDate || t.dueDate > threeDaysFromNow)
     );
   }, [currentUserTasks]);
-
-  const activeTask = currentUserTasks.find(t => t.id === activeTaskId);
 
   const groupedTasks = useMemo(() => {
     const list = showCompleted ? currentUserTasks.filter(t => t.status === 'done') : currentUserTasks.filter(t => t.status !== 'done' && !t.parentId);
