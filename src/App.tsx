@@ -1404,6 +1404,9 @@ export default function App() {
                      setTasks(prev => prev.filter(t => t.id !== assignedTask.id));
                      throw new Error('assign failed');
                    }
+                   // 元タスクを自分のリストから削除
+                   setTasks(prev => prev.filter(t => t.id !== task.id));
+                   await deleteTaskFromFirestore(task.id);
                    const target = members.find(m => m.id === targetUserId);
                    showToast(`${target?.displayName || '相手'}にタスクを送りました`);
                    return assignedTask;
